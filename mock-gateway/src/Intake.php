@@ -32,6 +32,9 @@ final class Intake
     /** Seconds after which a client refused for a full queue may try again. */
     private const FULL_RETRY_S = 60;
 
+    /** The most bytes one character may take in the body: an escaped surrogate pair. */
+    private const ESCAPED_CHAR_BYTES = 12;
+
     /**
      * Every refusal of the contract: code → [HTTP status, message, `ponow_za_s`, `element`
      * of a forced refusal on the batch route]. The messages are the real gateway's; a
@@ -295,15 +298,19 @@ final class Intake
     }
 
     /**
-     * The body ceiling of the real gateway: every item at its character ceiling (4 bytes a
-     * character), 1 KiB for its other fields, 16 KiB for the rest.
+     * The body ceiling of the real gateway: every item at its character ceiling, 1 KiB for
+     * its other fields, 16 KiB for the rest. A character may take 12 bytes (a character
+     * outside the BMP sent as ASCII-escaped JSON is a surrogate pair, `\ud83d\ude00`), so a
+     * valid comment is never refused for how its JSON encoder escapes it (`json_encode`
+     * without `JSON_UNESCAPED_UNICODE`).
      *
      * @param int $items The items the route takes at most (1 on the synchronous route).
-     * @return int Bytes.
+     * @return int Bytes: 53,408 on the synchronous route and 756,864 on the batch route
+     *     with the defaults.
      */
     private function bodyCeiling(int $items): int
     {
-        return $items * ($this->cfg->maxChars * 4 + 1024) + 16384;
+        return $items * ($this->cfg->maxChars * self::ESCAPED_CHAR_BYTES + 1024) + 16384;
     }
 
     /**

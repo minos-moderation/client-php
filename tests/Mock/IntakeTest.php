@@ -100,6 +100,57 @@ final class IntakeTest extends MockTestCase
         self::assertSame(202, $answer['status']);
     }
 
+    public function testAFullBatchSentAsAsciiEscapedJsonIsAccepted(): void
+    {
+        $cfg = $this->config();
+        $body = (string)json_encode(['elementy' => self::fullItems()]);
+        self::assertGreaterThan(20 * 36000, strlen($body), 'every character must be a 12-byte escaped pair');
+
+        self::assertSame(202, (new Intake($cfg))->handle($cfg->key, null, $body, self::NOW)['status']);
+        self::assertSame(20, $this->queue($cfg)->length());
+    }
+
+    /**
+     * The gateway's ceiling, 20 × (3000 × 12 + 1024) bytes for the items and 16,384 for the
+     * rest: a body of 756,864 bytes is read, one byte more is refused before it is parsed.
+     */
+    public function testTheBodyCeilingIsTheGateways(): void
+    {
+        $cfg = $this->config();
+        $items = self::fullItems();
+        $items[0]['meta'] = ['padding' => ''];
+        $json = (string)json_encode(['elementy' => $items]);
+
+        $over = (new Intake($cfg))->handle($cfg->key, null, self::sized($json, 756865), self::NOW);
+        self::assertSame([413, 'za_duze_zadanie'], [$over['status'], $over['body']['blad']['kod']]);
+        self::assertArrayNotHasKey('element', $over['body']['blad']);
+        self::assertSame(0, $this->queue($cfg)->length());
+
+        $atCeiling = (new Intake($cfg))->handle($cfg->key, null, self::sized($json, 756864), self::NOW);
+        self::assertSame(202, $atCeiling['status']);
+    }
+
+    /**
+     * Both ceilings follow `MINOS_MOCK_MAX_ITEMS` and `MINOS_MOCK_MAX_CHARS`:
+     * items × (characters × 12 + 1024) + 16,384 bytes.
+     */
+    public function testTheBodyCeilingsFollowTheConfiguredLimits(): void
+    {
+        $cfg = $this->config(['MINOS_MOCK_MAX_ITEMS' => '2', 'MINOS_MOCK_MAX_CHARS' => '100']);
+        $batch = '{"elementy":[{"id":"k-1","tekst":"x","meta":{"padding":""}}]}';
+        $sync = '{"tekst":"x","meta":{"padding":""}}';
+        $intake = new Intake($cfg);
+
+        // 2 × (100 × 12 + 1024) + 16,384 = 20,832.
+        self::assertSame(202, $intake->handle($cfg->key, null, self::sized($batch, 20832), self::NOW)['status']);
+        self::assertSame('za_duze_zadanie',
+            $intake->handle($cfg->key, null, self::sized($batch, 20833), self::NOW)['body']['blad']['kod']);
+        // 1 × (100 × 12 + 1024) + 16,384 = 18,608.
+        self::assertSame(200, $intake->handleSync($cfg->key, null, self::sized($sync, 18608))['status']);
+        self::assertSame('za_duze_zadanie',
+            $intake->handleSync($cfg->key, null, self::sized($sync, 18609))['body']['blad']['kod']);
+    }
+
     public function testAFullQueueIs429WithARetryHint(): void
     {
         $cfg = $this->config(['MINOS_MOCK_QUEUE_MAX' => '2']);
@@ -152,6 +203,18 @@ final class IntakeTest extends MockTestCase
         ksort($documented);
         ksort($mock);
         self::assertSame($documented, $mock);
+    }
+
+    /**
+     * The default batch at its limits: 20 items of {@see fullEscapedText()}.
+     *
+     * @return array<int,array{id:string,tekst:string}>
+     */
+    private static function fullItems(): array
+    {
+        return array_map(static function (int $i): array {
+            return ['id' => 'k-' . $i, 'tekst' => self::fullEscapedText()];
+        }, range(1, 20));
     }
 
     /**
