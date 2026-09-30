@@ -99,7 +99,7 @@ final class SyncRouteTest extends MockTestCase
             'text too long'           => [(string)json_encode(['tekst' => str_repeat('ż', 3001)]), 413, 'limit_dlugosci'],
             'profile off the key'     => ['{"tekst":"x","profil":"child_strict"}', 403, 'profil_niedozwolony'],
             'profile is not a string' => ['{"tekst":"x","profil":1}', 403, 'profil_niedozwolony'],
-            'body over the ceiling'   => [(string)json_encode(['tekst' => 'x', 'meta' => str_repeat('a', 30000)]), 413, 'za_duze_zadanie'],
+            'body over the ceiling'   => [(string)json_encode(['tekst' => 'x', 'meta' => str_repeat('a', 60000)]), 413, 'za_duze_zadanie'],
         ];
     }
 
@@ -107,6 +107,32 @@ final class SyncRouteTest extends MockTestCase
     {
         $answer = $this->post($this->config(), ['tekst' => "  \n" . str_repeat('ż', 3000) . "\t "]);
         self::assertSame(200, $answer['status']);
+    }
+
+    public function testAFullCommentSentAsAsciiEscapedJsonIsAccepted(): void
+    {
+        $body = (string)json_encode(['tekst' => self::fullEscapedText()]);
+        self::assertSame(36012, strlen($body), 'every character must be a 12-byte escaped pair');
+
+        $cfg = $this->config();
+        self::assertSame(200, (new Intake($cfg))->handleSync($cfg->key, null, $body)['status']);
+    }
+
+    /**
+     * The gateway's ceiling, 3000 × 12 + 1024 bytes for the comment and 16,384 for the rest:
+     * a body of 53,408 bytes is read, one byte more is refused before it is parsed.
+     */
+    public function testTheBodyCeilingIsTheGateways(): void
+    {
+        $cfg = $this->config();
+        $json = (string)json_encode(['tekst' => self::fullEscapedText(), 'meta' => ['padding' => '']]);
+
+        $atCeiling = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, 53408));
+        self::assertSame(200, $atCeiling['status']);
+
+        $over = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, 53409));
+        self::assertSame([413, 'za_duze_zadanie'], [$over['status'], $over['body']['blad']['kod']]);
+        self::assertQueueUntouched($cfg);
     }
 
     public function testNoKeyOrAnotherKeyIs401(): void
@@ -141,7 +167,7 @@ final class SyncRouteTest extends MockTestCase
      */
     public function testTheChecksRunInTheContractsOrder(): void
     {
-        $tooBig = '{"tekst":"' . str_repeat('a', 40000);
+        $tooBig = '{"tekst":"' . str_repeat('a', 60000);
         $steps = [
             ['wgb2b_inny', 'b2b_free', $tooBig, 'brak_klucza'],
             [null, 'b2b_free', $tooBig, 'tylko_klucze_platne'],

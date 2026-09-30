@@ -88,7 +88,7 @@ Every refusal has the shape `{"blad": {"kod", "komunikat", "ponow_za_s"?, "eleme
 | 400 | `brak_tekstu` | an item has no text (`element`) |
 | 413 | `za_duzo_elementow` | more than 20 items |
 | 413 | `limit_dlugosci` | an item is longer than 3000 characters (`element`) |
-| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed |
+| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed; the ceiling allows every item to be sent as ASCII-escaped JSON |
 | 429 | `kolejka_pelna` | the gateway's queue is full (`ponow_za_s`) |
 | 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
 | 503 | `kolejka_niedostepna` | the queue cannot work right now |
@@ -283,7 +283,7 @@ The same shape, `{"blad": {"kod", "komunikat", "ponow_za_s"?}}`, with no `elemen
 | 400 | `bledne_wejscie` | the body is not a JSON object, or `tekst` is there but is not a string |
 | 400 | `brak_tekstu` | no `tekst`, or only whitespace |
 | 413 | `limit_dlugosci` | `tekst` is longer than 3000 characters |
-| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed |
+| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed; the ceiling allows every item to be sent as ASCII-escaped JSON |
 | 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
 | 503 | `silnik_przeciazony` | the engine cannot take the comment right now (`ponow_za_s`) |
 | 404 | `nie_znaleziono` | B2B is off on this gateway |
