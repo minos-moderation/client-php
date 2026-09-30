@@ -16,7 +16,7 @@ namespace Minos\Mock;
  * | `[minos:blokuj]` | `zablokowane` |
  * | `[minos:cenzuruj]` | `ocenzurowane`; every `[[fragment]]` is masked with `█` per character in `ocenzurowany` (no `[[…]]` = no `ocenzurowany`, as in the contract) |
  * | `[minos:kategoria=<label>]` | adds the category (repeatable); `samookaleczenie` also sets `wsparcie` |
- * | `[minos:nieocenione]` | `{"id", "status": "nieocenione"}` |
+ * | `[minos:nieocenione]` | `{"id", "status": "nieocenione"}` (`{"status": "nieocenione"}` on the synchronous route) |
  * | `[minos:bez-wersji]` | `wersja: null` |
  *
  * Delivery markers are read by {@see Worker} ({@see deliveryFlags}): `[minos:dwa-razy]`
@@ -25,7 +25,7 @@ namespace Minos\Mock;
  * delivered; disappears with its TTL, like an entry the real worker never reached).
  *
  * The payload is built like the gateway builds it: the same fields in the same order,
- * nothing more.
+ * nothing more. The synchronous route answers {@see verdict}, the same payload without `id`.
  */
 final class Verdicts
 {
@@ -54,9 +54,22 @@ final class Verdicts
      */
     public static function payload(string $itemId, string $text): array
     {
+        return ['id' => $itemId] + self::verdict($text);
+    }
+
+    /**
+     * The verdict for a comment: the webhook payload without `id`, which is what the
+     * synchronous route answers.
+     *
+     * @param string $text The comment, with its markers.
+     * @return array<string,mixed> `{status, kwalifikacja, kategorie, ocenzurowany?, wsparcie,
+     *     wersja}`, or exactly `{status: nieocenione}`.
+     */
+    public static function verdict(string $text): array
+    {
         $markers = self::markers($text);
         if (isset($markers['nieocenione'])) {
-            return ['id' => $itemId, 'status' => 'nieocenione'];
+            return ['status' => 'nieocenione'];
         }
 
         $qualification = 'bezpieczne';
@@ -69,8 +82,7 @@ final class Verdicts
         $categories = array_values(array_intersect(self::CATEGORIES, $markers['kategoria'] ?? []));
         sort($categories);
 
-        $payload = [
-            'id'           => $itemId,
+        $verdict = [
             'status'       => 'ocenione',
             'kwalifikacja' => $qualification,
             'kategorie'    => $categories,
@@ -80,12 +92,12 @@ final class Verdicts
                 return str_repeat(self::MASK, mb_strlen($m[1]));
             }, $text);
             if (is_string($masked) && $masked !== $text) {
-                $payload['ocenzurowany'] = $masked;
+                $verdict['ocenzurowany'] = $masked;
             }
         }
-        $payload['wsparcie'] = in_array('samookaleczenie', $categories, true);
-        $payload['wersja'] = isset($markers['bez-wersji']) ? null : self::VERSION;
-        return $payload;
+        $verdict['wsparcie'] = in_array('samookaleczenie', $categories, true);
+        $verdict['wersja'] = isset($markers['bez-wersji']) ? null : self::VERSION;
+        return $verdict;
     }
 
     /**

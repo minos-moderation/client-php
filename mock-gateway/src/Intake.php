@@ -5,14 +5,18 @@ declare(strict_types=1);
 namespace Minos\Mock;
 
 /**
- * `POST /api/v1/b2b/oceny` of the mock: checks a batch the way the real gateway does and
- * queues it.
+ * The mock's two B2B routes: `POST /api/v1/b2b/oceny` ({@see handle}) checks a batch the way
+ * the real gateway does and queues it; `POST /api/v1/b2b/ocena` ({@see handleSync}) checks one
+ * comment and answers its verdict at once.
  *
- * The checks, their order and the error codes follow the gateway's B2B route
- * (`docs/contract.md` → Errors): the key, the body's size, the JSON, the webhook, the
- * batch item by item (whole or not at all, with the item's position in `blad.element`),
- * the profiles, the queue's room. The key's rate limits are not simulated
- * — ask for any refusal with the mock-only header {@see FORCE_HEADER} instead.
+ * The checks, their order and the error codes follow the gateway's routes
+ * (`docs/contract.md` → each route's Errors). The batch: the key, the body's size, the JSON,
+ * the webhook, the batch item by item (whole or not at all, with the item's position in
+ * `blad.element`), the profiles, the queue's room. The synchronous route: the key and its
+ * class, the body's size, the JSON, then the rules every batch item meets ({@see comment}),
+ * without `id` and without `element`; nothing is queued. The key's rate limits are not
+ * simulated — ask for any refusal of the route with the mock-only header
+ * {@see FORCE_HEADER} instead.
  */
 final class Intake
 {
@@ -29,12 +33,14 @@ final class Intake
     private const FULL_RETRY_S = 60;
 
     /**
-     * Every refusal of the contract: code → [HTTP status, message, `ponow_za_s`, `element`].
-     * The messages are the real gateway's.
+     * Every refusal of the contract: code → [HTTP status, message, `ponow_za_s`, `element`
+     * of a forced refusal on the batch route]. The messages are the real gateway's; a
+     * client reads `kod`, never `komunikat`.
      */
     private const ERRORS = [
         'brak_klucza'              => [401, 'Ta trasa wymaga klucza B2B.', null, null],
         'nie_ta_powierzchnia'      => [403, 'Ta trasa jest dla kluczy B2B.', null, null],
+        'tylko_klucze_platne'      => [403, 'Ocena synchroniczna jest tylko dla kluczy płatnych. Klucz bezpłatny korzysta z trasy asynchronicznej /api/v1/b2b/oceny.', null, null],
         'brak_webhooka'            => [403, 'Ten klucz nie ma skonfigurowanego adresu zwrotnego — nie mielibyśmy gdzie odesłać werdyktu.', null, null],
         'profil_niedozwolony'      => [403, 'Ten klucz nie ma dostępu do wskazanego profilu.', null, 0],
         'bledne_wejscie'           => [400, 'Oczekuję pola `elementy` z listą komentarzy.', null, null],
@@ -51,8 +57,18 @@ final class Intake
         'limit_w_locie_klucza'     => [429, 'Ten klucz ma już maksymalną liczbę zapytań w toku.', 1, null],
         'limit_globalny_b2b'       => [429, 'Usługa jest chwilowo przeciążona. Spróbuj ponownie później.', 300, null],
         'kolejka_niedostepna'      => [503, 'Kolejka ocen jest chwilowo niedostępna. Spróbuj później.', null, null],
+        'silnik_przeciazony'       => [503, 'Silnik oceny jest chwilowo zajęty. Spróbuj ponownie za chwilę.', 30, null],
         'nie_znaleziono'           => [404, 'Nie ma tu nic.', null, null],
     ];
+
+    /** Codes only the batch route sends ({@see batchCodes}). */
+    private const BATCH_ONLY = [
+        'brak_webhooka', 'brak_elementow', 'bledny_identyfikator', 'powtorzony_identyfikator',
+        'za_duzo_elementow', 'kolejka_pelna', 'kolejka_niedostepna',
+    ];
+
+    /** Codes only the synchronous route sends ({@see syncCodes}). */
+    private const SYNC_ONLY = ['tylko_klucze_platne', 'silnik_przeciazony'];
 
     /** @var Config */
     private $cfg;
@@ -71,17 +87,29 @@ final class Intake
     }
 
     /**
-     * The codes {@see FORCE_HEADER} accepts — every refusal of the contract.
+     * The codes {@see FORCE_HEADER} accepts on the batch route: the refusals its contract
+     * table lists, and no other.
      *
      * @return array<int,string> The codes.
      */
-    public static function codes(): array
+    public static function batchCodes(): array
     {
-        return array_keys(self::ERRORS);
+        return array_values(array_diff(array_keys(self::ERRORS), self::SYNC_ONLY));
     }
 
     /**
-     * Handles one request.
+     * The codes {@see FORCE_HEADER} accepts on the synchronous route: the refusals its
+     * contract table lists, and no other (never a queue's or a webhook's).
+     *
+     * @return array<int,string> The codes.
+     */
+    public static function syncCodes(): array
+    {
+        return array_values(array_diff(array_keys(self::ERRORS), self::BATCH_ONLY));
+    }
+
+    /**
+     * Handles one batch request (`POST /api/v1/b2b/oceny`).
      *
      * @param string|null $key    The `X-Gateway-Key` header, or null.
      * @param string|null $force  The {@see FORCE_HEADER} header, or null.
@@ -91,18 +119,13 @@ final class Intake
      */
     public function handle(?string $key, ?string $force, string $body, int $now): array
     {
-        if ($key === null || !hash_equals($this->cfg->key, $key)) {
+        if (!$this->knowsKey($key)) {
             return self::refuse('brak_klucza');
         }
         if ($force !== null && $force !== '') {
-            return isset(self::ERRORS[$force])
-                ? self::refuse($force, $this->limitFor($force))
-                : ['status' => 400, 'body' => ['blad' => [
-                    'kod'       => 'atrapa_nieznany_kod',
-                    'komunikat' => 'Atrapa nie zna kodu z nagłówka ' . self::FORCE_HEADER . '.',
-                ]]];
+            return $this->forced($force, true);
         }
-        if (strlen($body) > $this->bodyCeiling()) {
+        if (strlen($body) > $this->bodyCeiling($this->cfg->maxItems)) {
             return self::refuse('za_duze_zadanie');
         }
         $decoded = json_decode($body, true);
@@ -125,6 +148,57 @@ final class Intake
     }
 
     /**
+     * Handles one synchronous request (`POST /api/v1/b2b/ocena`): one comment, its verdict
+     * in the response, nothing queued and nothing kept.
+     *
+     * @param string|null $key   The `X-Gateway-Key` header, or null.
+     * @param string|null $force The {@see FORCE_HEADER} header, or null.
+     * @param string      $body  The raw body.
+     * @return array{status:int,body:array} `200` with the verdict ({@see Verdicts::verdict}),
+     *     or `{blad}` without `element`.
+     */
+    public function handleSync(?string $key, ?string $force, string $body): array
+    {
+        if (!$this->knowsKey($key)) {
+            return self::refuse('brak_klucza');
+        }
+        if (!$this->cfg->isPaidKey()) {
+            return self::refuse('tylko_klucze_platne');
+        }
+        if ($force !== null && $force !== '') {
+            return $this->forced($force, false);
+        }
+        if (strlen($body) > $this->bodyCeiling(1)) {
+            return self::refuse('za_duze_zadanie');
+        }
+        if (!json_decode($body) instanceof \stdClass) {
+            return self::answer(400, 'bledne_wejscie', 'Nie rozumiem tego żądania.');
+        }
+        $decoded = (array)json_decode($body, true);
+        // A `tekst` that is there but is not a string is a malformed request, not a missing
+        // text (a batch item still answers `brak_tekstu`, as its contract says).
+        if (array_key_exists('tekst', $decoded) && !is_string($decoded['tekst'])) {
+            return self::answer(400, 'bledne_wejscie', 'Pole `tekst` musi być napisem.');
+        }
+        $comment = $this->comment($decoded, null);
+        if (isset($comment['blad'])) {
+            return $comment['blad'];
+        }
+        return ['status' => 200, 'body' => Verdicts::verdict($comment['text'])];
+    }
+
+    /**
+     * Whether the request carries the mock's key.
+     *
+     * @param string|null $key The `X-Gateway-Key` header, or null.
+     * @return bool True for the configured key alone.
+     */
+    private function knowsKey(?string $key): bool
+    {
+        return $key !== null && hash_equals($this->cfg->key, $key);
+    }
+
+    /**
      * Validates the batch and builds the queue items.
      *
      * @param mixed $batch The `elementy` field.
@@ -134,7 +208,7 @@ final class Intake
     private function items($batch, int $now): array
     {
         if (!is_array($batch) || ($batch !== [] && array_keys($batch) !== range(0, count($batch) - 1))) {
-            return ['blad' => self::refuse('bledne_wejscie', null, null)];
+            return ['blad' => self::refuse('bledne_wejscie')];
         }
         if ($batch === []) {
             return ['blad' => self::refuse('brak_elementow')];
@@ -156,23 +230,16 @@ final class Intake
                 return ['blad' => self::refuse('powtorzony_identyfikator', null, $position)];
             }
             $seen[$id] = true;
-            $text = is_string($element['tekst'] ?? null) ? trim($element['tekst']) : '';
-            if ($text === '') {
-                return ['blad' => self::refuse('brak_tekstu', null, $position)];
-            }
-            if (mb_strlen($text) > $this->cfg->maxChars) {
-                return ['blad' => self::refuse('limit_dlugosci', $this->cfg->maxChars, $position)];
-            }
-            $profile = $element['profil'] ?? ($this->cfg->profiles[0] ?? '');
-            if (!is_string($profile) || !in_array($profile, $this->cfg->profiles, true)) {
-                return ['blad' => self::refuse('profil_niedozwolony', null, $position)];
+            $comment = $this->comment($element, $position);
+            if (isset($comment['blad'])) {
+                return $comment;
             }
             // Only these fields enter the queue: a `webhook` or `url` in the request is
             // never read, like in the real gateway (SSRF).
             $items[] = [
                 'item_id'     => $id,
-                'text'        => $text,
-                'profile'     => $profile,
+                'text'        => $comment['text'],
+                'profile'     => $comment['profile'],
                 'meta'        => is_array($element['meta'] ?? null) ? $element['meta'] : null,
                 'received_at' => $now,
                 'next_at'     => $now + $this->cfg->delayS,
@@ -182,14 +249,61 @@ final class Intake
     }
 
     /**
+     * The rules every comment meets on both routes, in the gateway's order: its text, its
+     * length, its profile.
+     *
+     * @param array<mixed> $comment  A batch item, or the synchronous route's body.
+     * @param int|null     $position The item's position in the batch; null on the synchronous
+     *     route, whose refusals name no `element`.
+     * @return array{text:string,profile:string}|array{blad:array{status:int,body:array}}
+     *     The trimmed text and the profile, or the refusal.
+     */
+    private function comment(array $comment, ?int $position): array
+    {
+        $text = is_string($comment['tekst'] ?? null) ? trim($comment['tekst']) : '';
+        if ($text === '') {
+            return ['blad' => self::refuse('brak_tekstu', null, $position)];
+        }
+        if (mb_strlen($text) > $this->cfg->maxChars) {
+            return ['blad' => self::refuse('limit_dlugosci', $this->cfg->maxChars, $position)];
+        }
+        $profile = $comment['profil'] ?? ($this->cfg->profiles[0] ?? '');
+        if (!is_string($profile) || !in_array($profile, $this->cfg->profiles, true)) {
+            return ['blad' => self::refuse('profil_niedozwolony', null, $position)];
+        }
+        return ['text' => $text, 'profile' => $profile];
+    }
+
+    /**
+     * The refusal {@see FORCE_HEADER} asks for, if the route can send it.
+     *
+     * @param string $code    The header's code.
+     * @param bool   $inBatch Whether the route takes a batch. There, a forced item refusal
+     *     names the position a real one could; the synchronous route names none.
+     * @return array{status:int,body:array} The refusal, or `400 atrapa_nieznany_kod` for a
+     *     code the route never sends.
+     */
+    private function forced(string $code, bool $inBatch): array
+    {
+        if (!in_array($code, $inBatch ? self::batchCodes() : self::syncCodes(), true)) {
+            return ['status' => 400, 'body' => ['blad' => [
+                'kod'       => 'atrapa_nieznany_kod',
+                'komunikat' => 'Ta trasa nie wysyła kodu z nagłówka ' . self::FORCE_HEADER . '.',
+            ]]];
+        }
+        return self::refuse($code, $this->limitFor($code), $inBatch ? self::ERRORS[$code][3] : null);
+    }
+
+    /**
      * The body ceiling of the real gateway: every item at its character ceiling (4 bytes a
      * character), 1 KiB for its other fields, 16 KiB for the rest.
      *
+     * @param int $items The items the route takes at most (1 on the synchronous route).
      * @return int Bytes.
      */
-    private function bodyCeiling(): int
+    private function bodyCeiling(int $items): int
     {
-        return $this->cfg->maxItems * ($this->cfg->maxChars * 4 + 1024) + 16384;
+        return $items * ($this->cfg->maxChars * 4 + 1024) + 16384;
     }
 
     /**
@@ -211,17 +325,16 @@ final class Intake
      *
      * @param string   $code     The code (a key of {@see ERRORS}).
      * @param int|null $limit    The number the message names, if it names one.
-     * @param int|null $position The item, overriding the default position of forced errors.
+     * @param int|null $position The batch item it names in `element`, if any.
      * @return array{status:int,body:array}
      */
     private static function refuse(string $code, ?int $limit = null, ?int $position = null): array
     {
-        [$status, $message, $retryS, $defaultPosition] = self::ERRORS[$code];
+        [$status, $message, $retryS] = self::ERRORS[$code];
         if ($limit !== null) {
             $message = sprintf($message, $limit);
         }
-        return self::answer($status, $code, $message, $retryS,
-            $position !== null ? $position : $defaultPosition);
+        return self::answer($status, $code, $message, $retryS, $position);
     }
 
     /**

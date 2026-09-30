@@ -88,6 +88,7 @@ final class IntakeTest extends MockTestCase
             'id with a final newline'  => [['elementy' => [['id' => "k-1\n", 'tekst' => 'x']]], 400, 'bledny_identyfikator', 0],
             'repeated id'              => [['elementy' => [$ok, $ok]], 400, 'powtorzony_identyfikator', 1],
             'blank text'               => [['elementy' => [$ok, ['id' => 'k-1', 'tekst' => "  \n"]]], 400, 'brak_tekstu', 1],
+            'text is not a string'     => [['elementy' => [$ok, ['id' => 'k-1', 'tekst' => ['x']]]], 400, 'brak_tekstu', 1],
             'text too long'            => [['elementy' => [['id' => 'k-1', 'tekst' => str_repeat('ż', 3001)]]], 413, 'limit_dlugosci', 0],
             'profile off the key'      => [['elementy' => [$ok, ['id' => 'k-1', 'tekst' => 'x', 'profil' => 'child_strict']]], 403, 'profil_niedozwolony', 1],
         ];
@@ -111,23 +112,29 @@ final class IntakeTest extends MockTestCase
         self::assertSame(1, $this->queue($cfg)->length());
     }
 
-    public function testAnyDocumentedRefusalCanBeForced(): void
+    public function testAnyRefusalOfTheBatchRouteCanBeForcedAndNoOther(): void
     {
         $cfg = $this->config();
-        foreach (Intake::codes() as $code) {
+        foreach (Intake::batchCodes() as $code) {
             $answer = (new Intake($cfg))->handle($cfg->key, $code, '{}', self::NOW);
             self::assertSame($code, $answer['body']['blad']['kod'], $code);
             self::assertGreaterThanOrEqual(400, $answer['status'], $code);
             self::assertStringNotContainsString('%d', $answer['body']['blad']['komunikat'], $code);
         }
-        $unknown = (new Intake($cfg))->handle($cfg->key, 'cos_innego', '{}', self::NOW);
-        self::assertSame('atrapa_nieznany_kod', $unknown['body']['blad']['kod']);
+        // The synchronous route's own codes, and anything else, are never sent here.
+        foreach (['tylko_klucze_platne', 'silnik_przeciazony', 'cos_innego'] as $code) {
+            $answer = (new Intake($cfg))->handle($cfg->key, $code, '{}', self::NOW);
+            self::assertSame([400, 'atrapa_nieznany_kod'], [$answer['status'], $answer['body']['blad']['kod']], $code);
+        }
+        self::assertSame(0, $this->queue($cfg)->length());
     }
 
-    public function testTheMockKnowsExactlyTheDocumentedErrorCodes(): void
+    public function testTheBatchRouteForcesExactlyItsDocumentedErrorCodes(): void
     {
         $document = (string)file_get_contents(__DIR__ . '/../../docs/contract.md');
-        preg_match_all('/^\| (\d{3}) \| (.+?) \|/m', $document, $rows, PREG_SET_ORDER);
+        self::assertSame(1, preg_match('/^## `POST \/api\/v1\/b2b\/oceny`\n(.*?)(?=^## |\z)/ms', $document, $section),
+            'the batch route\'s section must be found in docs/contract.md');
+        preg_match_all('/^\| (\d{3}) \| (.+?) \|/m', $section[1], $rows, PREG_SET_ORDER);
         $documented = [];
         foreach ($rows as $row) {
             preg_match_all('/`([a-z_0-9]+)`/', $row[2], $codes);
@@ -139,7 +146,7 @@ final class IntakeTest extends MockTestCase
 
         $cfg = $this->config();
         $mock = [];
-        foreach (Intake::codes() as $code) {
+        foreach (Intake::batchCodes() as $code) {
             $mock[$code] = (new Intake($cfg))->handle($cfg->key, $code, '{}', self::NOW)['status'];
         }
         ksort($documented);

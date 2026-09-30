@@ -10,12 +10,18 @@ namespace Minos\Mock;
  * The defaults are the real gateway's (20 items, 3000 characters, a 900 s TTL, a queue of
  * 500), so a plugin that works against the mock meets the same limits in production. The
  * mock has ONE key and ONE webhook, both set here — the real gateway keeps them in its key
- * store, one record per client.
+ * store, one record per client, with its class.
  */
 final class Config
 {
     /** @var string The only B2B key the mock accepts (`X-Gateway-Key`). */
     public $key;
+
+    /**
+     * @var string The key's class. Only {@see KEY_CLASS_PAID} may use the synchronous route;
+     *     `b2b_free`, or any other value, gets `403 tylko_klucze_platne` there.
+     */
+    public $keyClass;
 
     /** @var array<int,string> Profiles the key may ask for; the first is the default. */
     public $profiles;
@@ -53,6 +59,9 @@ final class Config
     /** The longest pause between two delivery attempts (the real gateway's 2 min). */
     public const MAX_BACKOFF_S = 120;
 
+    /** The class of a paid key, the only one the synchronous route accepts. */
+    public const KEY_CLASS_PAID = 'b2b_paid';
+
     /** The default key: recognisably a mock, shaped like a real one (`wgb2b_…`). */
     public const DEFAULT_KEY = 'wgb2b_atrapa_minos_0000000000000000';
 
@@ -79,6 +88,7 @@ final class Config
 
         $cfg = new self();
         $cfg->key = $get('MINOS_MOCK_KEY', self::DEFAULT_KEY);
+        $cfg->keyClass = $get('MINOS_MOCK_KEY_CLASS', self::KEY_CLASS_PAID);
         $cfg->profiles = array_values(array_filter(array_map('trim',
             explode(',', $get('MINOS_MOCK_PROFILES', 'forum_adult,forum_teen'))), 'strlen'));
         $url = $get('MINOS_MOCK_WEBHOOK_URL', '');
@@ -94,6 +104,17 @@ final class Config
         $cfg->dataDir = $get('MINOS_MOCK_DATA_DIR',
             rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'minos-mock');
         return $cfg;
+    }
+
+    /**
+     * Whether the key is a paid one. An unknown class is not: a typo in
+     * `MINOS_MOCK_KEY_CLASS` shows up as a refusal, not as a quietly paid key.
+     *
+     * @return bool True for {@see KEY_CLASS_PAID} alone.
+     */
+    public function isPaidKey(): bool
+    {
+        return $this->keyClass === self::KEY_CLASS_PAID;
     }
 
     /**
