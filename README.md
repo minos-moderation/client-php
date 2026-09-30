@@ -91,10 +91,12 @@ The mock never assesses content. **You choose the verdict** with markers in the 
 The four delivery markers (`dwa-razy`, `zly-podpis`, `stary-podpis`, `cisza`) mean nothing
 on the synchronous route, which delivers nothing.
 
-To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` with any
-code from the contract's error tables (for example `kolejka_pelna`,
-`limit_minutowy_klucza` or `silnik_przeciazony`), on either route. On the synchronous
-route the key and its class are checked first, as in the gateway.
+To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` with a code
+from that route's error table in the contract: for example `kolejka_pelna` or
+`limit_minutowy_klucza` on the batch route, `silnik_przeciazony` or `tylko_klucze_platne`
+on the synchronous one. A code the route never sends (`kolejka_pelna` on the synchronous
+route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route the key and its
+class are checked first, as in the gateway.
 
 Settings (environment):
 

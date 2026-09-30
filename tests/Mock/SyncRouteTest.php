@@ -91,7 +91,10 @@ final class SyncRouteTest extends MockTestCase
             'an empty list'           => ['[]', 400, 'bledne_wejscie'],
             'no text'                 => ['{}', 400, 'brak_tekstu'],
             'a batch instead'         => ['{"elementy":[{"id":"k-1","tekst":"x"}]}', 400, 'brak_tekstu'],
-            'text is not a string'    => ['{"tekst":["x"]}', 400, 'brak_tekstu'],
+            'text is a list'          => ['{"tekst":["x"]}', 400, 'bledne_wejscie'],
+            'text is a number'        => ['{"tekst":7}', 400, 'bledne_wejscie'],
+            'text is null'            => ['{"tekst":null}', 400, 'bledne_wejscie'],
+            'text is an object'       => ['{"tekst":{"a":"x"},"profil":"child_strict"}', 400, 'bledne_wejscie'],
             'blank text'              => ['{"tekst":"  \n\t"}', 400, 'brak_tekstu'],
             'text too long'           => [(string)json_encode(['tekst' => str_repeat('ż', 3001)]), 413, 'limit_dlugosci'],
             'profile off the key'     => ['{"tekst":"x","profil":"child_strict"}', 403, 'profil_niedozwolony'],
@@ -155,10 +158,10 @@ final class SyncRouteTest extends MockTestCase
         }
     }
 
-    public function testAnyDocumentedRefusalCanBeForcedAfterTheKeyAndClass(): void
+    public function testAnyRefusalOfTheRouteCanBeForcedAfterTheKeyAndClassAndNoOther(): void
     {
         $cfg = $this->config();
-        foreach (Intake::codes() as $code) {
+        foreach (Intake::syncCodes() as $code) {
             $answer = (new Intake($cfg))->handleSync($cfg->key, $code, '{"tekst":"x"}');
             self::assertSame($code, $answer['body']['blad']['kod'], $code);
             self::assertGreaterThanOrEqual(400, $answer['status'], $code);
@@ -173,10 +176,17 @@ final class SyncRouteTest extends MockTestCase
             (new Intake($free))->handleSync($free->key, 'limit_minutowy_klucza', '{"tekst":"x"}')['body']['blad']['kod']);
         self::assertSame('brak_klucza',
             (new Intake($cfg))->handleSync('wgb2b_inny', 'limit_minutowy_klucza', '{"tekst":"x"}')['body']['blad']['kod']);
+
+        // A queue's, a webhook's or a batch's refusal is never sent by this route.
+        foreach (['kolejka_pelna', 'brak_webhooka', 'kolejka_niedostepna', 'brak_elementow', 'bledny_identyfikator',
+            'powtorzony_identyfikator', 'za_duzo_elementow', 'cos_innego'] as $code) {
+            $answer = (new Intake($cfg))->handleSync($cfg->key, $code, '{"tekst":"x"}');
+            self::assertSame([400, 'atrapa_nieznany_kod'], [$answer['status'], $answer['body']['blad']['kod']], $code);
+        }
         self::assertQueueUntouched($cfg);
     }
 
-    public function testTheMockKnowsEveryCodeOfTheSynchronousErrorTable(): void
+    public function testTheRouteForcesExactlyItsDocumentedErrorCodes(): void
     {
         $document = (string)file_get_contents(__DIR__ . '/../../docs/contract.md');
         self::assertSame(1, preg_match('/^## `POST \/api\/v1\/b2b\/ocena`\n(.*?)(?=^## |\z)/ms', $document, $section),
@@ -192,10 +202,13 @@ final class SyncRouteTest extends MockTestCase
         self::assertGreaterThanOrEqual(10, count($documented), 'the error table must be found');
 
         $cfg = $this->config();
-        foreach ($documented as $code => $status) {
-            $answer = (new Intake($cfg))->handleSync($cfg->key, $code, '{"tekst":"x"}');
-            self::assertSame([$status, $code], [$answer['status'], $answer['body']['blad']['kod']]);
+        $mock = [];
+        foreach (Intake::syncCodes() as $code) {
+            $mock[$code] = (new Intake($cfg))->handleSync($cfg->key, $code, '{"tekst":"x"}')['status'];
         }
+        ksort($documented);
+        ksort($mock);
+        self::assertSame($documented, $mock);
         self::assertArrayNotHasKey('brak_webhooka', $documented, 'the synchronous route needs no webhook');
     }
 

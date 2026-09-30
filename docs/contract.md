@@ -242,7 +242,7 @@ because free B2B is asynchronous only.
 
 | Field | Required | Description |
 |---|---|---|
-| `tekst` | yes | The comment: 1–3000 **characters** (not bytes) after surrounding whitespace is trimmed. |
+| `tekst` | yes | The comment, a string: 1–3000 **characters** (not bytes) after surrounding whitespace is trimmed. |
 | `profil` | no | A profile on the key's list. Without it, the key's first profile is used. |
 | `meta` | no | The same five spam signals as in a batch item. Anything else is dropped silently. **Never send an e-mail, IP address or author id.** |
 
@@ -280,7 +280,7 @@ The same shape, `{"blad": {"kod", "komunikat", "ponow_za_s"?}}`, with no `elemen
 | 403 | `nie_ta_powierzchnia` | the key belongs to another surface |
 | 403 | `tylko_klucze_platne` | a free key (`b2b_free`): this route is for paid keys only |
 | 403 | `profil_niedozwolony` | `profil` is not on the key's list |
-| 400 | `bledne_wejscie` | the body is not a JSON object |
+| 400 | `bledne_wejscie` | the body is not a JSON object, or `tekst` is there but is not a string |
 | 400 | `brak_tekstu` | no `tekst`, or only whitespace |
 | 413 | `limit_dlugosci` | `tekst` is longer than 3000 characters |
 | 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed |

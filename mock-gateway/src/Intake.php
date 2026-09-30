@@ -15,7 +15,8 @@ namespace Minos\Mock;
  * `blad.element`), the profiles, the queue's room. The synchronous route: the key and its
  * class, the body's size, the JSON, then the rules every batch item meets ({@see comment}),
  * without `id` and without `element`; nothing is queued. The key's rate limits are not
- * simulated — ask for any refusal with the mock-only header {@see FORCE_HEADER} instead.
+ * simulated — ask for any refusal of the route with the mock-only header
+ * {@see FORCE_HEADER} instead.
  */
 final class Intake
 {
@@ -33,14 +34,13 @@ final class Intake
 
     /**
      * Every refusal of the contract: code → [HTTP status, message, `ponow_za_s`, `element`
-     * of a forced refusal on the batch route]. The batch route's messages are the real
-     * gateway's; the wording of the synchronous route's own codes is the mock's. A client
-     * reads `kod`, never `komunikat`.
+     * of a forced refusal on the batch route]. The messages are the real gateway's; a
+     * client reads `kod`, never `komunikat`.
      */
     private const ERRORS = [
         'brak_klucza'              => [401, 'Ta trasa wymaga klucza B2B.', null, null],
         'nie_ta_powierzchnia'      => [403, 'Ta trasa jest dla kluczy B2B.', null, null],
-        'tylko_klucze_platne'      => [403, 'Ta trasa jest tylko dla kluczy płatnych.', null, null],
+        'tylko_klucze_platne'      => [403, 'Ocena synchroniczna jest tylko dla kluczy płatnych. Klucz bezpłatny korzysta z trasy asynchronicznej /api/v1/b2b/oceny.', null, null],
         'brak_webhooka'            => [403, 'Ten klucz nie ma skonfigurowanego adresu zwrotnego — nie mielibyśmy gdzie odesłać werdyktu.', null, null],
         'profil_niedozwolony'      => [403, 'Ten klucz nie ma dostępu do wskazanego profilu.', null, 0],
         'bledne_wejscie'           => [400, 'Oczekuję pola `elementy` z listą komentarzy.', null, null],
@@ -57,9 +57,18 @@ final class Intake
         'limit_w_locie_klucza'     => [429, 'Ten klucz ma już maksymalną liczbę zapytań w toku.', 1, null],
         'limit_globalny_b2b'       => [429, 'Usługa jest chwilowo przeciążona. Spróbuj ponownie później.', 300, null],
         'kolejka_niedostepna'      => [503, 'Kolejka ocen jest chwilowo niedostępna. Spróbuj później.', null, null],
-        'silnik_przeciazony'       => [503, 'Silnik ocen jest chwilowo przeciążony. Spróbuj ponownie za chwilę.', 30, null],
+        'silnik_przeciazony'       => [503, 'Silnik oceny jest chwilowo zajęty. Spróbuj ponownie za chwilę.', 30, null],
         'nie_znaleziono'           => [404, 'Nie ma tu nic.', null, null],
     ];
+
+    /** Codes only the batch route sends ({@see batchCodes}). */
+    private const BATCH_ONLY = [
+        'brak_webhooka', 'brak_elementow', 'bledny_identyfikator', 'powtorzony_identyfikator',
+        'za_duzo_elementow', 'kolejka_pelna', 'kolejka_niedostepna',
+    ];
+
+    /** Codes only the synchronous route sends ({@see syncCodes}). */
+    private const SYNC_ONLY = ['tylko_klucze_platne', 'silnik_przeciazony'];
 
     /** @var Config */
     private $cfg;
@@ -78,13 +87,25 @@ final class Intake
     }
 
     /**
-     * The codes {@see FORCE_HEADER} accepts — every refusal of the contract.
+     * The codes {@see FORCE_HEADER} accepts on the batch route: the refusals its contract
+     * table lists, and no other.
      *
      * @return array<int,string> The codes.
      */
-    public static function codes(): array
+    public static function batchCodes(): array
     {
-        return array_keys(self::ERRORS);
+        return array_values(array_diff(array_keys(self::ERRORS), self::SYNC_ONLY));
+    }
+
+    /**
+     * The codes {@see FORCE_HEADER} accepts on the synchronous route: the refusals its
+     * contract table lists, and no other (never a queue's or a webhook's).
+     *
+     * @return array<int,string> The codes.
+     */
+    public static function syncCodes(): array
+    {
+        return array_values(array_diff(array_keys(self::ERRORS), self::BATCH_ONLY));
     }
 
     /**
@@ -151,9 +172,15 @@ final class Intake
             return self::refuse('za_duze_zadanie');
         }
         if (!json_decode($body) instanceof \stdClass) {
-            return self::answer(400, 'bledne_wejscie', 'Oczekuję obiektu JSON z polem `tekst`.');
+            return self::answer(400, 'bledne_wejscie', 'Nie rozumiem tego żądania.');
         }
-        $comment = $this->comment((array)json_decode($body, true), null);
+        $decoded = (array)json_decode($body, true);
+        // A `tekst` that is there but is not a string is a malformed request, not a missing
+        // text (a batch item still answers `brak_tekstu`, as its contract says).
+        if (array_key_exists('tekst', $decoded) && !is_string($decoded['tekst'])) {
+            return self::answer(400, 'bledne_wejscie', 'Pole `tekst` musi być napisem.');
+        }
+        $comment = $this->comment($decoded, null);
         if (isset($comment['blad'])) {
             return $comment['blad'];
         }
@@ -248,19 +275,20 @@ final class Intake
     }
 
     /**
-     * The refusal {@see FORCE_HEADER} asks for.
+     * The refusal {@see FORCE_HEADER} asks for, if the route can send it.
      *
      * @param string $code    The header's code.
      * @param bool   $inBatch Whether the route takes a batch. There, a forced item refusal
      *     names the position a real one could; the synchronous route names none.
-     * @return array{status:int,body:array} The refusal, or `400 atrapa_nieznany_kod`.
+     * @return array{status:int,body:array} The refusal, or `400 atrapa_nieznany_kod` for a
+     *     code the route never sends.
      */
     private function forced(string $code, bool $inBatch): array
     {
-        if (!isset(self::ERRORS[$code])) {
+        if (!in_array($code, $inBatch ? self::batchCodes() : self::syncCodes(), true)) {
             return ['status' => 400, 'body' => ['blad' => [
                 'kod'       => 'atrapa_nieznany_kod',
-                'komunikat' => 'Atrapa nie zna kodu z nagłówka ' . self::FORCE_HEADER . '.',
+                'komunikat' => 'Ta trasa nie wysyła kodu z nagłówka ' . self::FORCE_HEADER . '.',
             ]]];
         }
         return self::refuse($code, $this->limitFor($code), $inBatch ? self::ERRORS[$code][3] : null);
