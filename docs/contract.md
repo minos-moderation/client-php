@@ -15,12 +15,17 @@ enumeration values stay exactly as below, whatever the naming of the code.
 The B2B route is **not yet open in production**. Until it is, develop against the mock
 gateway (`mock-gateway/`, see the README).
 
+The synchronous route, [`POST /api/v1/b2b/ocena`](#post-apiv1b2bocena), is described here
+ahead of the gateway: it is still being built on the gateway's side and is not merged yet.
+The mock gateway already answers it.
+
 ## The key
 
 Every request carries `X-Gateway-Key: wgb2b_…`. The key is a record in the gateway's key
 store, issued by the operator. The record decides everything; no request header does:
 
 - **the class**, `b2b_free` or `b2b_paid`. Free B2B accepts up to 15 minutes of latency;
+  only a paid key may use the synchronous route;
 - **the profiles** the key may ask for. The first one is the default. The forum profiles
   are `forum_adult` and `forum_teen`;
 - **the key's own limits**: per minute, per day and in flight. On top of them sits a
@@ -224,3 +229,76 @@ header: t=1727430000,v1=299d2efa59614cfd71860eac52c66357d750ef428c13409c82b251d8
    - `wsparcie` → show support, whatever the verdict.
 5. Answer `2xx` quickly and do the slow work afterwards. The gateway gives one delivery
    10 seconds by default, connection included.
+
+## `POST /api/v1/b2b/ocena`
+
+One comment, and its verdict **in the response**: no queue, no webhook, no signature.
+**For paid keys only** (`b2b_paid`). A free key is refused with `403 tylko_klucze_platne`,
+because free B2B is asynchronous only.
+
+```json
+{ "tekst": "treść komentarza", "profil": "forum_adult", "meta": { "links": 1 } }
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `tekst` | yes | The comment: 1–3000 **characters** (not bytes) after surrounding whitespace is trimmed. |
+| `profil` | no | A profile on the key's list. Without it, the key's first profile is used. |
+| `meta` | no | The same five spam signals as in a batch item. Anything else is dropped silently. **Never send an e-mail, IP address or author id.** |
+
+One request is one comment: there is no `id`, no `elementy` and no batch.
+
+### Response `200`
+
+The [webhook payload](#payload) **without `id`**; its fields mean the same:
+
+```json
+{
+  "status": "ocenione",
+  "kwalifikacja": "ocenzurowane",
+  "kategorie": ["wulgaryzmy"],
+  "ocenzurowany": "no to jest ███████ pomysł",
+  "wsparcie": false,
+  "wersja": "3f0c9a41d2b7e8c5"
+}
+```
+
+When the engine is unavailable, does not answer in time, or answers something the gateway
+does not recognise as a verdict, the answer is `200` with exactly
+`{"status": "nieocenione"}`. **The gateway never guesses a verdict.** Apply the plugin's
+fail-open or fail-closed setting, as for a `nieocenione` webhook, and do the same when your
+own request to the gateway times out: without an answer there is no verdict.
+
+### Errors
+
+The same shape, `{"blad": {"kod", "komunikat", "ponow_za_s"?}}`, with no `element` and no
+`Retry-After` header.
+
+| HTTP | `kod` | When |
+|---|---|---|
+| 401 | `brak_klucza` | no key, or an unknown one |
+| 403 | `nie_ta_powierzchnia` | the key belongs to another surface |
+| 403 | `tylko_klucze_platne` | a free key (`b2b_free`): this route is for paid keys only |
+| 403 | `profil_niedozwolony` | `profil` is not on the key's list |
+| 400 | `bledne_wejscie` | the body is not a JSON object |
+| 400 | `brak_tekstu` | no `tekst`, or only whitespace |
+| 413 | `limit_dlugosci` | `tekst` is longer than 3000 characters |
+| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed |
+| 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
+| 503 | `silnik_przeciazony` | the engine cannot take the comment right now (`ponow_za_s`) |
+| 404 | `nie_znaleziono` | B2B is off on this gateway |
+
+The checks run in this order:
+1. the key and its class;
+2. the body's size;
+3. the JSON;
+4. the text;
+5. the profile;
+6. the key's own limits and the global ceiling.
+
+**What a client does with a refusal:**
+- On `429` and **every** `503`, whatever its `kod`, the comment has no verdict yet: apply
+  the fail-open or fail-closed setting now, or retry after `ponow_za_s` (after a backoff
+  when that field is missing). Tell a `503` by its status, never by its code.
+- On `4xx` other than `429`, the request is wrong and retrying will not help. Treat it
+  as a configuration error and show it to the forum's administrator.

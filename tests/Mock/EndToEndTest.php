@@ -10,7 +10,8 @@ use Minos\Mock\Config;
 
 /**
  * The mock as a developer runs it: the built-in server takes a batch over HTTP, the worker
- * CLI delivers to a real HTTP receiver, and the delivery verifies with the client library.
+ * CLI delivers to a real HTTP receiver, and the delivery verifies with the client library;
+ * the synchronous route answers a verdict over HTTP and queues nothing.
  */
 final class EndToEndTest extends MockTestCase
 {
@@ -75,6 +76,40 @@ final class EndToEndTest extends MockTestCase
         }
         ksort($verdicts);
         self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane'], $verdicts);
+    }
+
+    public function testOneCommentPostedOverHttpGetsItsVerdictInTheResponse(): void
+    {
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
+        $headers = ['X-Gateway-Key: ' . Config::DEFAULT_KEY, 'Content-Type: application/json'];
+
+        foreach (['/api/v1/b2b/ocena', '/api/b2b/ocena'] as $path) {
+            [$status, $answer] = $this->post("http://127.0.0.1:{$port}{$path}", $headers,
+                ['tekst' => 'spadaj [minos:blokuj] [minos:kategoria=nekanie]']);
+            self::assertSame(200, $status, $path);
+            self::assertSame(['status', 'kwalifikacja', 'kategorie', 'wsparcie', 'wersja'], array_keys($answer), $path);
+            self::assertSame(['zablokowane', ['nekanie']], [$answer['kwalifikacja'], $answer['kategorie']], $path);
+        }
+
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", $headers,
+            ['tekst' => 'x [minos:nieocenione]']);
+        self::assertSame([200, ['status' => 'nieocenione']], [$status, $answer]);
+
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
+            array_merge($headers, ['X-Minos-Mock-Error: silnik_przeciazony']), ['tekst' => 'x']);
+        self::assertSame([503, 'silnik_przeciazony'], [$status, $answer['blad']['kod']]);
+
+        // A synchronous request is never queued: the mock's data directory stays empty.
+        self::assertSame([], glob($this->dir . '/*') ?: []);
+    }
+
+    public function testAFreeKeyIsRefusedOnTheSynchronousRouteOverHttp(): void
+    {
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null,
+            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => 'b2b_free']);
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
+            ['X-Gateway-Key: ' . Config::DEFAULT_KEY], ['tekst' => 'x']);
+        self::assertSame([403, 'tylko_klucze_platne'], [$status, $answer['blad']['kod']]);
     }
 
     public function testAnotherPathIs404(): void
