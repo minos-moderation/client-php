@@ -45,10 +45,10 @@ CI runs the suite on PHP 7.4 and 8.3.
 
 ## The mock gateway
 
-The real B2B route is off in production (see the contract's status). The mock answers
-like it: the same checks, the same error codes, and verdicts delivered to your webhook,
-signed the same way, or answered at once on the synchronous route. It needs no
-`composer install`.
+The real B2B routes, the batch and the synchronous one, exist on the gateway but are off in
+production (see the contract's status). The mock answers like them: the same checks, the
+same error codes, and verdicts delivered to your webhook, signed the same way, or answered
+at once on the synchronous route. It needs no `composer install`.
 
 ```bash
 # 1. The API (terminal 1)
