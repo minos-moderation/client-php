@@ -39,7 +39,7 @@ final class WorkerTest extends MockTestCase
         self::assertTrue(Signature::verify($cfg->webhookSecret, $this->signature($delivery), $delivery['body'], self::NOW));
         $read = WebhookPayload::parse($delivery['body']);
         self::assertSame(['k-1', 'ocenzurowane', ['nekanie']], [$read['id'], $read['kwalifikacja'], $read['kategorie']]);
-        self::assertSame('uwaga ██████ [minos:cenzuruj] [minos:kategoria=nekanie]', $read['ocenzurowany']);
+        self::assertSame('uwaga [[██████]] [minos:cenzuruj] [minos:kategoria=nekanie]', $read['ocenzurowany']);
         self::assertSame(0, $this->queue($cfg)->length(), 'a delivered entry is gone');
     }
 

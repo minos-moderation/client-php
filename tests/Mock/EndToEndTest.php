@@ -15,6 +15,9 @@ use Minos\Mock\Config;
  */
 final class EndToEndTest extends MockTestCase
 {
+    /** A censored comment with whitespace around it, which the gateway trims. */
+    private const CENSORED = "  no to jest [[żałosny]] pomysł [minos:cenzuruj]\n";
+
     /** @var array<int,array{0:resource,1:int}> Started servers and their ports. */
     private $servers = [];
 
@@ -54,9 +57,10 @@ final class EndToEndTest extends MockTestCase
         ], ['elementy' => [
             ['id' => 'k-1', 'tekst' => 'Świetny wpis!'],
             ['id' => 'k-2', 'tekst' => 'spadaj [minos:blokuj] [minos:kategoria=nekanie]'],
+            ['id' => 'k-3', 'tekst' => self::CENSORED],
         ]]);
         self::assertSame(202, $status);
-        self::assertSame(['przyjete' => ['k-1', 'k-2']], $answer);
+        self::assertSame(['przyjete' => ['k-1', 'k-2', 'k-3']], $answer);
 
         exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../../mock-gateway/bin/worker.php') . ' --once 2>&1',
             $output, $exit);
@@ -65,17 +69,21 @@ final class EndToEndTest extends MockTestCase
         $deliveries = array_map(static function (string $line): array {
             return json_decode($line, true);
         }, file($received, FILE_IGNORE_NEW_LINES) ?: []);
-        self::assertCount(2, $deliveries);
+        self::assertCount(3, $deliveries);
         $verdicts = [];
+        $masked = [];
         foreach ($deliveries as $delivery) {
             self::assertSame('application/json; charset=utf-8', $delivery['typ']);
             self::assertTrue(Signature::verify(Config::DEFAULT_SECRET, (string)$delivery['podpis'],
                 $delivery['body'], time()));
             $read = WebhookPayload::parse($delivery['body']);
             $verdicts[$read['id']] = $read['kwalifikacja'];
+            $masked[$read['id']] = $read['ocenzurowany'];
         }
         ksort($verdicts);
-        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane'], $verdicts);
+        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane', 'k-3' => 'ocenzurowane'], $verdicts);
+        self::assertSame(mb_strlen(trim(self::CENSORED)), mb_strlen((string)$masked['k-3']),
+            'the masked text is as long as the trimmed text that was sent');
     }
 
     public function testOneCommentPostedOverHttpGetsItsVerdictInTheResponse(): void
@@ -90,6 +98,12 @@ final class EndToEndTest extends MockTestCase
             self::assertSame(['status', 'kwalifikacja', 'kategorie', 'wsparcie', 'wersja'], array_keys($answer), $path);
             self::assertSame(['zablokowane', ['nekanie']], [$answer['kwalifikacja'], $answer['kategorie']], $path);
         }
+
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", $headers,
+            ['tekst' => self::CENSORED]);
+        self::assertSame([200, 'ocenzurowane'], [$status, $answer['kwalifikacja']]);
+        self::assertSame(mb_strlen(trim(self::CENSORED)), mb_strlen((string)$answer['ocenzurowany']),
+            'the masked text is as long as the trimmed text that was sent');
 
         [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", $headers,
             ['tekst' => 'x [minos:nieocenione]']);

@@ -36,7 +36,60 @@ final class VerdictsTest extends TestCase
     {
         $payload = Verdicts::payload('k', 'no to jest [[żałosny]] i [[głupi]] pomysł [minos:cenzuruj]');
         self::assertSame('ocenzurowane', $payload['kwalifikacja']);
-        self::assertSame('no to jest ███████ i █████ pomysł [minos:cenzuruj]', $payload['ocenzurowany']);
+        self::assertSame('no to jest [[███████]] i [[█████]] pomysł [minos:cenzuruj]', $payload['ocenzurowany']);
+    }
+
+    /**
+     * The gateway's masked text is as long as the text that was sent, `█` per masked
+     * character, and a plugin may refuse one of another length.
+     *
+     * @dataProvider censoredComments
+     */
+    public function testAMaskedTextKeepsTheSentTextsLengthCharacterByCharacter(string $text): void
+    {
+        $masked = Verdicts::payload('k', $text)['ocenzurowany'] ?? null;
+        self::assertIsString($masked);
+        self::assertSame(mb_strlen($text), mb_strlen($masked), 'characters, not bytes');
+
+        $sent = self::characters($text);
+        $changed = 0;
+        foreach (self::characters($masked) as $position => $character) {
+            if ($character !== $sent[$position]) {
+                self::assertSame('█', $character, "position {$position} is either kept or masked");
+                $changed++;
+            }
+        }
+        self::assertGreaterThan(0, $changed, 'something was masked');
+    }
+
+    public function censoredComments(): array
+    {
+        return [
+            'one fragment'            => ['no to jest [[głupi]] pomysł [minos:cenzuruj]'],
+            'two fragments'           => ['[[żałosny]] i [[głupi]] [minos:cenzuruj] [minos:kategoria=wulgaryzmy]'],
+            'four-byte characters'    => ['a [[😀ź😀]] b [minos:cenzuruj]'],
+            'a fragment on two lines' => ["a [[b\nc]] d [minos:cenzuruj]"],
+        ];
+    }
+
+    /**
+     * @dataProvider unclearBrackets
+     */
+    public function testNestedOrUnbalancedBracketsMaskNothing(string $text): void
+    {
+        $payload = Verdicts::payload('k', $text);
+        self::assertSame('ocenzurowane', $payload['kwalifikacja']);
+        self::assertArrayNotHasKey('ocenzurowany', $payload, 'the mock cannot tell what to mask');
+    }
+
+    public function unclearBrackets(): array
+    {
+        return [
+            'nested'       => ['a [[b [[c]] d]] [minos:cenzuruj]'],
+            'never closed' => ['a [[b]] c [[d [minos:cenzuruj]'],
+            'never opened' => ['a b]] [minos:cenzuruj]'],
+            'closed twice' => ['a [[b]] c]] [minos:cenzuruj]'],
+        ];
     }
 
     public function testCenzurujWithoutAFragmentHasNoMaskedText(): void
@@ -44,6 +97,7 @@ final class VerdictsTest extends TestCase
         $payload = Verdicts::payload('k', 'nic do maskowania [minos:cenzuruj]');
         self::assertSame('ocenzurowane', $payload['kwalifikacja']);
         self::assertArrayNotHasKey('ocenzurowany', $payload);
+        self::assertArrayNotHasKey('ocenzurowany', Verdicts::payload('k', 'pusty [[]] fragment [minos:cenzuruj]'));
     }
 
     public function testSelfHarmSetsWsparcieEvenWhenLetThrough(): void
@@ -88,6 +142,14 @@ final class VerdictsTest extends TestCase
         self::assertSame($payload['ocenzurowany'] ?? null, $read['ocenzurowany']);
         self::assertSame($payload['wsparcie'] ?? false, $read['wsparcie']);
         self::assertSame($payload['wersja'] ?? null, $read['wersja']);
+    }
+
+    /**
+     * @return array<int,string> The characters (code points) of a UTF-8 text.
+     */
+    private static function characters(string $text): array
+    {
+        return preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [];
     }
 
     public function markedComments(): array

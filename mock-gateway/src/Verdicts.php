@@ -14,7 +14,7 @@ namespace Minos\Mock;
  * |---|---|
  * | (none) | `ocenione`, `bezpieczne`, no categories |
  * | `[minos:blokuj]` | `zablokowane` |
- * | `[minos:cenzuruj]` | `ocenzurowane`; every `[[fragment]]` is masked with `█` per character in `ocenzurowany` (no `[[…]]` = no `ocenzurowany`, as in the contract) |
+ * | `[minos:cenzuruj]` | `ocenzurowane`; in `ocenzurowany` every `[[fragment]]` becomes `[[█…]]`, `█` per character, so it keeps the sent text's length (no `[[…]]`, or nested or unbalanced brackets = no `ocenzurowany`, as in the contract) |
  * | `[minos:kategoria=<label>]` | adds the category (repeatable); `samookaleczenie` also sets `wsparcie` |
  * | `[minos:nieocenione]` | `{"id", "status": "nieocenione"}` (`{"status": "nieocenione"}` on the synchronous route) |
  * | `[minos:bez-wersji]` | `wersja: null` |
@@ -88,16 +88,54 @@ final class Verdicts
             'kategorie'    => $categories,
         ];
         if ($qualification === 'ocenzurowane') {
-            $masked = preg_replace_callback('/\[\[(.+?)\]\]/u', static function (array $m): string {
-                return str_repeat(self::MASK, mb_strlen($m[1]));
-            }, $text);
-            if (is_string($masked) && $masked !== $text) {
+            $masked = self::masked($text);
+            if ($masked !== null) {
                 $verdict['ocenzurowany'] = $masked;
             }
         }
         $verdict['wsparcie'] = in_array('samookaleczenie', $categories, true);
         $verdict['wersja'] = isset($markers['bez-wersji']) ? null : self::VERSION;
         return $verdict;
+    }
+
+    /**
+     * The masked text of a comment: the characters of every `[[fragment]]` replaced with
+     * `█`, one per character, and the brackets kept.
+     *
+     * The gateway's masked text has exactly the length of the (trimmed) text that was sent,
+     * and a plugin may rely on that; keeping the brackets keeps it here too. The markers are
+     * the mock's own artefact, so they stay visible, like `[minos:cenzuruj]` does.
+     *
+     * @param string $text The comment, with its markers.
+     * @return string|null The masked text; null when nothing was masked, or when the brackets
+     *     are nested or unbalanced, because then the mock cannot tell what to mask.
+     */
+    private static function masked(string $text): ?string
+    {
+        // One capturing group: even indices are text, odd ones a `[[` or a `]]`.
+        $parts = preg_split('/(\[\[|\]\])/u', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if (!is_array($parts)) {
+            return null;
+        }
+        $masked = '';
+        $inside = false;
+        $maskedAny = false;
+        foreach ($parts as $index => $part) {
+            if ($index % 2 === 1) {
+                // A `[[` inside a fragment, or a `]]` outside one.
+                if (($part === '[[') === $inside) {
+                    return null;
+                }
+                $inside = !$inside;
+                $masked .= $part;
+            } elseif ($inside && $part !== '') {
+                $masked .= str_repeat(self::MASK, mb_strlen($part));
+                $maskedAny = true;
+            } else {
+                $masked .= $part;
+            }
+        }
+        return $inside || !$maskedAny ? null : $masked;
     }
 
     /**
