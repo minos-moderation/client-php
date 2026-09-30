@@ -12,12 +12,13 @@ enumeration values stay exactly as below, whatever the naming of the code.
 
 ## Status
 
-The B2B route is **not yet open in production**. Until it is, develop against the mock
+The B2B routes are **not yet open in production**. Until they are, develop against the mock
 gateway (`mock-gateway/`, see the README).
 
-The synchronous route, [`POST /api/v1/b2b/ocena`](#post-apiv1b2bocena), is described here
-ahead of the gateway: it is still being built on the gateway's side and is not merged yet.
-The mock gateway already answers it.
+The synchronous route, [`POST /api/v1/b2b/ocena`](#post-apiv1b2bocena), exists on the
+gateway (merged on 2026-09-30) and, like the batch route, stays off in production until B2B
+is enabled: until then it answers `404 nie_znaleziono`, or `401 brak_klucza`. The mock
+gateway answers it.
 
 ## The key
 
@@ -88,7 +89,7 @@ Every refusal has the shape `{"blad": {"kod", "komunikat", "ponow_za_s"?, "eleme
 | 400 | `brak_tekstu` | an item has no text (`element`) |
 | 413 | `za_duzo_elementow` | more than 20 items |
 | 413 | `limit_dlugosci` | an item is longer than 3000 characters (`element`) |
-| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed; the ceiling allows every item to be sent as ASCII-escaped JSON |
+| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed: 756,864 bytes, so every item fits sent as ASCII-escaped JSON (12 bytes a character) |
 | 429 | `kolejka_pelna` | the gateway's queue is full (`ponow_za_s`) |
 | 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
 | 503 | `kolejka_niedostepna` | the queue cannot work right now |
@@ -263,11 +264,16 @@ The [webhook payload](#payload) **without `id`**; its fields mean the same:
 }
 ```
 
-When the engine is unavailable, does not answer in time, or answers something the gateway
-does not recognise as a verdict, the answer is `200` with exactly
+When the engine is unavailable, does not answer in time, answers an error, or answers
+something the gateway does not recognise as a verdict, the answer is `200` with exactly
 `{"status": "nieocenione"}`. **The gateway never guesses a verdict.** Apply the plugin's
 fail-open or fail-closed setting, as for a `nieocenione` webhook, and do the same when your
-own request to the gateway times out: without an answer there is no verdict.
+own request to the gateway times out: without an answer there is no verdict. At its
+defaults the gateway answers within 20 seconds, or 26 when it runs two engines; set your
+request's timeout above that. Asking again is a new request under the key's limits.
+
+The B2B limits count per key, plus the shared ceiling, and never per address, so this
+route may be called from behind a server-side relay that forwards each forum's own key.
 
 ### Errors
 
@@ -280,12 +286,12 @@ The same shape, `{"blad": {"kod", "komunikat", "ponow_za_s"?}}`, with no `elemen
 | 403 | `nie_ta_powierzchnia` | the key belongs to another surface |
 | 403 | `tylko_klucze_platne` | a free key (`b2b_free`): this route is for paid keys only |
 | 403 | `profil_niedozwolony` | `profil` is not on the key's list |
-| 400 | `bledne_wejscie` | the body is not a JSON object, or `tekst` is there but is not a string |
+| 400 | `bledne_wejscie` | the body is not a JSON object, or `tekst` is there but is not a string (`null` included) |
 | 400 | `brak_tekstu` | no `tekst`, or only whitespace |
 | 413 | `limit_dlugosci` | `tekst` is longer than 3000 characters |
-| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed; the ceiling allows every item to be sent as ASCII-escaped JSON |
+| 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed: 53,408 bytes, so the longest comment fits however it is escaped (3000 characters as escaped surrogate pairs, the default of `json_encode`, are 36,012 bytes) |
 | 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
-| 503 | `silnik_przeciazony` | the engine cannot take the comment right now (`ponow_za_s`) |
+| 503 | `silnik_przeciazony` | the engine cannot take the comment right now, and nothing was assessed (`ponow_za_s`, in the body only) |
 | 404 | `nie_znaleziono` | B2B is off on this gateway |
 
 The checks run in this order:
