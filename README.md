@@ -79,7 +79,7 @@ The mock never assesses content. **You choose the verdict** with markers in the 
 |---|---|
 | (none) | `bezpieczne` |
 | `[minos:blokuj]` | `zablokowane` |
-| `[minos:cenzuruj]` | `ocenzurowane`. Every `[[fragment]]` is masked in `ocenzurowany`. |
+| `[minos:cenzuruj]` | `ocenzurowane`. In `ocenzurowany`, every `[[fragment]]` becomes `[[█…]]`, `█` per character: the brackets and markers stay, so the masked text is exactly as long as the (trimmed) text you sent, as with the gateway. No `[[…]]`, or nested or unbalanced brackets: no `ocenzurowany`. |
 | `[minos:kategoria=<label>]` | adds a category. `samookaleczenie` also sets `wsparcie`. |
 | `[minos:nieocenione]` | `status: nieocenione` (exactly `{"status":"nieocenione"}` on the synchronous route) |
 | `[minos:bez-wersji]` | `wersja: null` |
