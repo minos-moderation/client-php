@@ -12,13 +12,23 @@ enumeration values stay exactly as below, whatever the naming of the code.
 
 ## Status
 
-The B2B routes are **not yet open in production**. Until they are, develop against the mock
-gateway (`mock-gateway/`, see the README).
+The batch route, [`POST /api/v1/b2b/oceny`](#post-apiv1b2boceny), is **open in production**
+since 2026-10-25. It is the route the Minos plugins use: the gateway accepts the items at
+once and delivers each verdict to the key's webhook, signed.
 
 The synchronous route, [`POST /api/v1/b2b/ocena`](#post-apiv1b2bocena), exists on the
-gateway (merged on 2026-09-30) and, like the batch route, stays off in production until B2B
-is enabled: until then it answers `404 nie_znaleziono`, or `401 brak_klucza`. The mock
-gateway answers it.
+gateway but stays **closed in production** until a decision of its own: it answers
+`404 nie_znaleziono` to a recognised key, whatever the body (a missing or unknown key gets
+`401 brak_klucza` first). It is described below for when it opens; the mock gateway
+answers it already.
+
+Develop and test against the mock gateway (`mock-gateway/`, see the README), never against
+the production gateway.
+
+This copy follows the gateway's documentation as of 2026-10-01. Since then the gateway has
+added an optional context for an item, a personal-data note in the verdict and higher body
+ceilings, which this copy does not describe yet. A client built on it keeps working: the
+additions are optional, and `WebhookPayload::parse` ignores a key it does not know.
 
 ## The key
 
