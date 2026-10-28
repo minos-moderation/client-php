@@ -46,7 +46,9 @@ rule is stated, and the [index](#index) names them all.
   text.
 - **F7** A post with no text to assess but with a link goes to the failure mode. A text the
   plugin failed to extract is not an empty text: the failure mode applies, and nothing (not
-  even the title alone) is sent in its place.
+  even the title alone) is sent in its place. A topic's title alone is not a text to
+  assess: a first post whose body has no visible text goes to the failure mode and nothing
+  is sent.
 - **F8** A plugin that is switched on but cannot submit (no key or secret, an unusable
   gateway address) applies the failure mode to every new post and says why on every admin
   page; a fresh install starts switched off.
