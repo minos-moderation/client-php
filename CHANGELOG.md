@@ -43,6 +43,9 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
   holds the comment instead of publishing it, and `kategorie` is read only from a JSON
   list (an object names no category). An unknown category label is still kept.
 
+- The README names the public API ("Versioning") and what the library does at the edges;
+  `tests/Repo/PublicApiTest.php` holds the API to a declared list.
+
 ### The mock gateway
 
 - The new codes, ceilings and checks of the contract: the context and its refusals, the B2B

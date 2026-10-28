@@ -16,7 +16,7 @@ FIRST when you change it). Nothing here names private code, hosts or secrets.
   never a verdict. Unknown categories are kept, because the gateway's list grows.
 - **Compare secrets with `hash_equals`**, never `===`.
 - **Its public methods are the API of every PHP plugin**: keep them backward compatible,
-  or version the change.
+  or version the change (README → Versioning; `tests/Repo/PublicApiTest.php`).
 
 ## The contract
 

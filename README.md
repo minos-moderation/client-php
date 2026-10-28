@@ -12,7 +12,7 @@ to develop against.
 | `vectors/` | The gateway's test vectors (the webhook signature) |
 | `mock-gateway/` | A local stand-in for the gateway's B2B routes (batch and synchronous) and its delivery worker |
 | `tests/` | PHPUnit: the library, the mock, the contract document, the Claude Code rules |
-| `CHANGELOG.md` | What each release contains, its known differences from the gateway, and the version policy (0.x) |
+| `CHANGELOG.md` | What each release contains, its known differences from the gateway, and the version policy (0.x; see "Versioning") |
 
 ## Receiving a verdict
 
@@ -41,6 +41,40 @@ A missing or empty stored secret is always a refusal, never a valid signature: a
 sign with an empty secret, a `false` that a forum's storage returns for a missing setting
 would be read as one, and `Signature::verify`, the same code as the contract's reference
 verifier, leaves that guard to the caller.
+
+What the library does at the edges, so a plugin does not have to guess:
+
+- `Signature::verify` accepts a timestamp up to five minutes **either side** of your clock:
+  the window is symmetric. It trims the header before reading it and forgives nothing else
+  (`t=…, v1=…`, with a space after the comma, is malformed).
+- `WebhookPayload::parse` is for a webhook's body only. The synchronous route's answer has
+  no `id`, so `parse` returns `null` for it.
+- `parse` reads what it cannot use as absent, never as a verdict: a missing `kategorie` (or
+  one that is not a JSON list) is `[]`, an upper-case or malformed `wersja` is `null`, an
+  `ocenzurowany` that masks nothing (no `█`) is `null`, so the comment is held, and an
+  unknown `reakcja` in `dane_osobowe` is `nieocenione`.
+- Give every revision of a post its own `id` (`<platform>:<post id>.<n>`), and acknowledge
+  and ignore a verdict for an older revision: the verdict is for the text that was sent.
+
+## Versioning
+
+Semantic versioning from `v0.1.0`, with the notes of each release in
+[`CHANGELOG.md`](CHANGELOG.md) and in the GitHub release of its tag. The public API, what a
+plugin may rely on, is `Minos\Client`:
+
+- `Signature::verify`, `Signature::sign`, `Signature::HEADER` and
+  `Signature::DEFAULT_TOLERANCE_S`;
+- `WebhookPayload::parse` and the shape of its result (`id`, `status`, `kwalifikacja`,
+  `kategorie`, `ocenzurowany`, `wsparcie`, `wersja`, `dane_osobowe`), and the constants
+  `ASSESSED`, `UNASSESSED`, `QUALIFICATIONS`, `CATEGORIES`, `PERSONAL_DATA_KINDS` and
+  `PERSONAL_DATA_REACTIONS`.
+
+The mock gateway (its settings, markers and classes) and the tests are not API; the
+changelog still says what changed in them. Until 1.0.0 a minor version (0.2.0, 0.3.0, …)
+carries a new or changed public method or a contract copy brought up to the gateway, and a
+patch only fixes or narrows: a change that makes the library refuse more, failing closed,
+is a patch (the policy at the end of the changelog). `tests/Repo/PublicApiTest.php` holds
+the API to a declared list, so a change to it is always deliberate.
 
 ## Tests
 
