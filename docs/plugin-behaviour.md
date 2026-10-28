@@ -44,9 +44,16 @@ rule is stated, and the [index](#index) names them all.
 - **F6** A failing row never stops a loop (cron, sweeper, deferred apply): each row is
   handled on its own, and a failure is logged by step and post id only, without exception
   text.
-- **F7** A post with no text to assess but with a link goes to the failure mode. A text the
-  plugin failed to extract is not an empty text: the failure mode applies, and nothing (not
-  even the title alone) is sent in its place. A topic's title alone is not a text to
+- **F7** A post with no text to assess but with a link goes to the failure mode. A bare
+  address the reader sees is text: it is assessed and sent in `tekst`, and it counts in
+  `meta.links` and `meta.link_domains` like any link. A post whose only visible content is
+  an image, a video or an attachment (`[img]`, `[img=WxH]`, `[video]`, an `<img>` with no
+  visible text) or a link with no visible label (`[url=X] [/url]`, an `<a href>` with empty
+  text) has no text to assess: it goes to the failure mode and nothing is sent, because the
+  gateway does not assess images and an address the reader does not see is not the content
+  a verdict is about. An image's `alt` or `title` is text the reader can see (S1). A text
+  the plugin failed to extract is not an empty text: the failure mode applies, and nothing
+  (not even the title alone) is sent in its place. A topic's title alone is not a text to
   assess: a first post whose body has no visible text goes to the failure mode and nothing
   is sent.
 - **F8** A plugin that is switched on but cannot submit (no key or secret, an unusable
@@ -58,10 +65,13 @@ rule is stated, and the [index](#index) names them all.
 ## What is sent
 
 - **S1** `tekst` is the plain text the reader would see, including quoted text (introduced
-  by its author line, e.g. "Kasia napisał(a):"), quote titles, `title`/`alt` attribute text
-  and markup shown literally; formatting is removed. Text the reader never sees is not
-  added: neither the content of an HTML comment nor an attribute the platform's sanitiser
-  removes. A quote can never bypass moderation.
+  by its author line, e.g. "Kasia napisał(a):"), quote titles and markup shown literally;
+  formatting is removed. A `title` hint on a tag the platform's sanitiser keeps (such as
+  `a`, `abbr`, `span` or `summary`) and an image's `alt` or `title` are sent next to the
+  word they belong to, because the reader can see them. Text the reader never sees is never
+  added: not the content of an HTML comment, not an attribute the platform's sanitiser
+  removes, not a link's `href` (a link counts in `meta.links` and `meta.link_domains`, S2).
+  A quote can never bypass moderation.
 - **S2** `meta.link_domains` (at most 10 registrable domains), `meta.links` and
   `meta.author_first_post` are sent; never an e-mail, IP address, user id or login. The only
   names that leave the forum are those an author typed into the post (quote attributions),
@@ -118,7 +128,13 @@ rule is stated, and the [index](#index) names them all.
   messages its author about it.
 - **A8** A plugin keeps the original of a post it stored and the verdicts it received for
   30 days, then deletes them: the same period in every plugin, so a forum's privacy notice
-  can name it.
+  can name it. The 30 days cover the data the plugin stores itself (the original, the
+  verdicts and its own queue rows, with their digest and state), wherever it keeps them. An
+  entry the platform keeps in its own records because the plugin acted (in Discourse the
+  post's edit history and the notes of its review queue; in phpBB the moderator log, with
+  the topic, the decision and `wsparcie` but no post text) stays under the forum's own
+  rules and is not the plugin's to delete. Every plugin's README names what outlives the
+  30 days, because the forum's privacy notice has to say so.
 
 ## Packaging
 
@@ -155,10 +171,10 @@ rule is stated, and the [index](#index) names them all.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | 2026-10-28 |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | 2026-10-28 |
 | `F6` | a failing row never stops a loop | 2026-09-30 |
-| `F7` | no text to assess, or a failed extraction: the failure mode | 2026-10-28 |
+| `F7` | no text to assess (a title alone, only an image, a video or a link without a label), or a failed extraction: the failure mode; a bare address the reader sees is text | 2026-10-28, extended 2026-10-28 |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | 2026-10-28 |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | 2026-10-28 |
-| `S1` | `tekst` is what the reader sees | 2026-09-30, extended 2026-10-28 |
+| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | 2026-09-30, extended 2026-10-28 |
 | `S2` | links, domains, first post; never account data | 2026-09-30 |
 | `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | 2026-09-30 |
 | `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | 2026-09-30 |
@@ -178,7 +194,7 @@ rule is stated, and the [index](#index) names them all.
 | `A5` | a hold is the platform's own state | 2026-09-30 |
 | `A6` | a late verdict also applies to a post the failure mode held | 2026-10-28 |
 | `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | 2026-10-28 |
-| `A8` | the original and the verdict are kept 30 days | 2026-10-28 |
+| `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | 2026-10-28, extended 2026-10-28 |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30 |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | 2026-09-30, reworded 2026-10-28 |
 | `D2` | shared compliance scenarios in `scenarios/` | 2026-10-28 |
