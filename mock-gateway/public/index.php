@@ -34,6 +34,12 @@ if (in_array($path, ['/api/v1/b2b/oceny', '/api/b2b/oceny'], true) && $method ==
 }
 
 http_response_code($answer['status']);
-header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
-echo json_encode($answer['body'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if (isset($answer['raw'])) {
+    // A mock-only scenario: a body that is not JSON (`X-Minos-Mock-Error: 503-nie-json`).
+    header('Content-Type: text/html; charset=utf-8');
+    echo $answer['raw'];
+} else {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($answer['body'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}

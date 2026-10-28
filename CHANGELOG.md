@@ -43,6 +43,11 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
   holds the comment instead of publishing it, and `kategorie` is read only from a JSON
   list (an object names no category). An unknown category label is still kept.
 
+- `Signature::check($secret, $header, $body, $now, $toleranceS = 300)`, new and additive:
+  the answer of `verify` with its reason, `Signature::OK`, `MALFORMED`, `STALE` or
+  `MISMATCH`, for the administrator's log (never for the HTTP answer). `check(...) === OK`
+  exactly when `verify(...)` is true; `verify` stays the contract's reference verifier,
+  unchanged, and neither guards an empty secret (the caller does).
 - The README names the public API ("Versioning") and what the library does at the edges;
   `tests/Repo/PublicApiTest.php` holds the API to a declared list.
 
@@ -61,6 +66,18 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
   and the worker.
 - One broken queue entry no longer stops the worker: it is reported `blad` and dropped. A
   queued comment whose profile the key no longer allows is delivered as `nieocenione`.
+- The worker signs every attempt when it is made: a long pass over slow receivers no longer
+  sends signatures already stale. Its category list is the library's
+  (`WebhookPayload::CATEGORIES`), no longer a copy.
+- Mock-only failures to test against: `X-Minos-Mock-Error: 503-bez-kodu` and
+  `503-nie-json` on both routes, and the `[minos:nieczytelne]` delivery, signed but no
+  payload.
+
+### The package
+
+- The release archive leaves out `tests/`, `.claude/`, `.github/`, the `CLAUDE.md` files and
+  `phpunit.xml.dist`; it keeps `src/`, `docs/`, `vectors/` and `mock-gateway/`, which the
+  plugins use from `vendor/`.
 
 ## 0.1.0
 

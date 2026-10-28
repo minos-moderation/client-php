@@ -152,6 +152,21 @@ final class VerdictsTest extends TestCase
         ];
     }
 
+    /**
+     * The mock names exactly the categories of the client library's list, which
+     * `ContractDocumentTest` holds to the contract's: one list, nowhere copied.
+     */
+    public function testEveryCategoryOfTheLibrarysListAndNoOtherCanBeNamed(): void
+    {
+        $markers = implode(' ', array_map(static function (string $label): string {
+            return '[minos:kategoria=' . $label . ']';
+        }, WebhookPayload::CATEGORIES));
+        $named = Verdicts::payload('k', $markers . ' [minos:kategoria=nowa_kategoria]')['kategorie'];
+        $expected = WebhookPayload::CATEGORIES;
+        sort($expected);
+        self::assertSame($expected, $named);
+    }
+
     public function testNieocenioneIsOnlyTheIdAndTheStatus(): void
     {
         self::assertSame(['id' => 'k', 'status' => 'nieocenione'],
@@ -166,6 +181,7 @@ final class VerdictsTest extends TestCase
     public function testDeliveryFlagsAreReadFromTheComment(): void
     {
         self::assertSame(['dwa-razy', 'cisza'], Verdicts::deliveryFlags('[minos:cisza] a [minos:dwa-razy] [minos:blokuj]'));
+        self::assertSame(['nieczytelne'], Verdicts::deliveryFlags('[minos:nieczytelne]'));
         self::assertSame([], Verdicts::deliveryFlags('[minos:blokuj]'));
     }
 

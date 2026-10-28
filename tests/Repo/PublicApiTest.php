@@ -21,8 +21,13 @@ final class PublicApiTest extends TestCase
             'constants' => [
                 'HEADER'              => 'X-Wergiliusz-Podpis',
                 'DEFAULT_TOLERANCE_S' => 300,
+                'OK'                  => 'ok',
+                'MALFORMED'           => 'malformed',
+                'STALE'               => 'stale',
+                'MISMATCH'            => 'mismatch',
             ],
             'methods' => [
+                'static check(string $secret, string $header, string $body, int $now, int $toleranceS = 300): string',
                 'static sign(string $secret, string $body, int $timestamp): string',
                 'static verify(string $secret, string $header, string $body, int $now, int $toleranceS = 300): bool',
             ],

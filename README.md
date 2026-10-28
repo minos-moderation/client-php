@@ -14,6 +14,11 @@ to develop against.
 | `tests/` | PHPUnit: the library, the mock, the contract document, the Claude Code rules |
 | `CHANGELOG.md` | What each release contains, its known differences from the gateway, and the version policy (0.x; see "Versioning") |
 
+A release archive (`composer install --prefer-dist`, the zip of a tag) carries `src/`,
+`docs/`, `vectors/` and `mock-gateway/`, which the plugins use from `vendor/`, and leaves out
+what only this repository's development needs: `tests/`, `.claude/`, `.github/`, the
+`CLAUDE.md` files and `phpunit.xml.dist` (`.gitattributes`).
+
 ## Receiving a verdict
 
 Read [`docs/contract.md`](docs/contract.md) before writing plugin code; its receiving
@@ -42,6 +47,13 @@ sign with an empty secret, a `false` that a forum's storage returns for a missin
 would be read as one, and `Signature::verify`, the same code as the contract's reference
 verifier, leaves that guard to the caller.
 
+To tell the forum's administrator why a delivery was refused, `Signature::check()` takes
+the same arguments and returns the reason: `Signature::OK` exactly when `verify` is true,
+else `Signature::MALFORMED` (the header's form), `Signature::STALE` (the clock: more than
+five minutes apart) or `Signature::MISMATCH` (another secret, or a body that is not the
+exact bytes sent). Put the reason in the administrator's log only, never in the HTTP
+answer: the sender gets the same `401` whatever it is.
+
 What the library does at the edges, so a plugin does not have to guess:
 
 - `Signature::verify` accepts a timestamp up to five minutes **either side** of your clock:
@@ -62,8 +74,8 @@ Semantic versioning from `v0.1.0`, with the notes of each release in
 [`CHANGELOG.md`](CHANGELOG.md) and in the GitHub release of its tag. The public API, what a
 plugin may rely on, is `Minos\Client`:
 
-- `Signature::verify`, `Signature::sign`, `Signature::HEADER` and
-  `Signature::DEFAULT_TOLERANCE_S`;
+- `Signature::verify`, `Signature::check` and its reasons (`OK`, `MALFORMED`, `STALE`,
+  `MISMATCH`), `Signature::sign`, `Signature::HEADER` and `Signature::DEFAULT_TOLERANCE_S`;
 - `WebhookPayload::parse` and the shape of its result (`id`, `status`, `kwalifikacja`,
   `kategorie`, `ocenzurowany`, `wsparcie`, `wersja`, `dane_osobowe`), and the constants
   `ASSESSED`, `UNASSESSED`, `QUALIFICATIONS`, `CATEGORIES`, `PERSONAL_DATA_KINDS` and
@@ -138,17 +150,23 @@ The mock never assesses content. **You choose the verdict** with markers in the 
 | `[minos:dwa-razy]` | delivered twice (at-least-once delivery) |
 | `[minos:zly-podpis]` | signed with a wrong secret |
 | `[minos:stary-podpis]` | signed ten minutes ago |
+| `[minos:nieczytelne]` | signed with the right secret, but the body is the payload cut in half: a delivery that verifies and is no payload (`parse` returns `null`) |
 | `[minos:cisza]` | never delivered; the entry disappears with its TTL |
 
-`nieocenione` wins over `blokuj`, and `blokuj` over `cenzuruj`. The four delivery markers
-(`dwa-razy`, `zly-podpis`, `stary-podpis`, `cisza`) mean nothing on the synchronous route,
-which delivers nothing.
+`nieocenione` wins over `blokuj`, and `blokuj` over `cenzuruj`. The five delivery markers
+(`dwa-razy`, `zly-podpis`, `stary-podpis`, `nieczytelne`, `cisza`) mean nothing on the
+synchronous route, which delivers nothing. The worker signs every attempt at the moment it
+is made, however long its pass over the queue takes.
 
 To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` with a code
 from that route's error table in the contract: for example `kolejka_pelna` or
 `limit_minutowy_klucza` on the batch route, `silnik_przeciazony` or `tylko_klucze_platne`
 on the synchronous one. A code the route never sends (`kolejka_pelna` on the synchronous
-route, say) answers `400 atrapa_nieznany_kod`. The header is read after the key, so a
+route, say) answers `400 atrapa_nieznany_kod`. Two values that are no code exist for the
+mock alone, on both routes, for what a proxy in front of a gateway may answer:
+`503-bez-kodu` (a `503` whose `blad` has no `kod`) and `503-nie-json` (a `503` whose body
+is HTML, not JSON). Tell a `503` by its status, never by its body. The header is read after
+the key, so a
 missing or unknown key still gets `401 brak_klucza`; on the synchronous route it is read
 after the route's switch and the key's class, as the gateway checks them first: a closed
 route answers `404 nie_znaleziono` and a free key `403 tylko_klucze_platne`, whatever the

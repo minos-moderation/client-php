@@ -287,6 +287,31 @@ final class IntakeTest extends MockTestCase
         self::assertSame(0, $this->queue($cfg)->length());
     }
 
+    /**
+     * Two mock-only answers no contract code describes, on both routes: a `503` without a
+     * `kod`, and a `503` whose body is not JSON. Neither is a refusal a client may read a
+     * code from.
+     */
+    public function testA503WithoutACodeOrWithoutJsonCanBeForcedOnBothRoutes(): void
+    {
+        $cfg = $this->config();
+        $intake = new Intake($cfg);
+        foreach ([$intake->handle($cfg->key, '503-bez-kodu', '{}', self::NOW),
+            $intake->handleSync($cfg->key, '503-bez-kodu', '{"tekst":"x"}')] as $answer) {
+            self::assertSame(503, $answer['status']);
+            self::assertArrayNotHasKey('kod', $answer['body']['blad']);
+            self::assertArrayNotHasKey('ponow_za_s', $answer['body']['blad']);
+        }
+        foreach ([$intake->handle($cfg->key, '503-nie-json', '{}', self::NOW),
+            $intake->handleSync($cfg->key, '503-nie-json', '{"tekst":"x"}')] as $answer) {
+            self::assertSame(503, $answer['status']);
+            self::assertNull(json_decode($answer['raw']));
+        }
+        self::assertSame([], array_intersect(Intake::MOCK_SCENARIOS, array_merge(Intake::batchCodes(), Intake::syncCodes())),
+            'a mock scenario is no contract code');
+        self::assertSame(0, $this->queue($cfg)->length());
+    }
+
     public function testTheBatchRouteForcesExactlyItsDocumentedErrorCodes(): void
     {
         $document = (string)file_get_contents(__DIR__ . '/../../docs/contract.md');

@@ -27,8 +27,13 @@ use Minos\Client\WebhookPayload;
  *
  * Delivery markers are read by {@see Worker} ({@see deliveryFlags}): `[minos:dwa-razy]`
  * (delivered twice, as at-least-once allows), `[minos:zly-podpis]` (signed with a wrong
- * secret), `[minos:stary-podpis]` (timestamp ten minutes old), `[minos:cisza]` (never
- * delivered; disappears with its TTL, like an entry the real worker never reached).
+ * secret), `[minos:stary-podpis]` (timestamp ten minutes old), `[minos:nieczytelne]`
+ * (signed with the right secret, but the body is the payload cut in half: no payload a
+ * receiver can read), `[minos:cisza]` (never delivered; disappears with its TTL, like an
+ * entry the real worker never reached).
+ *
+ * The category labels are the client library's ({@see WebhookPayload::CATEGORIES}): one
+ * list, the contract's.
  *
  * The payload is built like the gateway builds it: the same fields in the same order,
  * nothing more. The synchronous route answers {@see verdict}, the same payload without `id`.
@@ -39,14 +44,7 @@ final class Verdicts
     public const VERSION = '6d6f636b6d6f636b';
 
     /** Delivery flags {@see Worker} understands. */
-    public const DELIVERY_FLAGS = ['dwa-razy', 'zly-podpis', 'stary-podpis', 'cisza'];
-
-    /** Category labels of the contract; a marker with another label is ignored. */
-    private const CATEGORIES = [
-        'mowa_nienawisci', 'grozba', 'przemoc', 'nekanie', 'tresc_seksualna',
-        'samookaleczenie', 'oszustwo', 'spam', 'ujawnianie_danych', 'dane_osobowe',
-        'wulgaryzmy', 'uzywki', 'uwodzenie_nieletnich', 'hazard', 'niebezpieczne_zachowanie',
-    ];
+    public const DELIVERY_FLAGS = ['dwa-razy', 'zly-podpis', 'stary-podpis', 'nieczytelne', 'cisza'];
 
     /** The mask character (the gateway's). */
     private const MASK = '█';
@@ -88,7 +86,7 @@ final class Verdicts
         if (isset($markers['blokuj'])) {
             $qualification = 'zablokowane';
         }
-        $categories = array_values(array_intersect(self::CATEGORIES, $markers['kategoria'] ?? []));
+        $categories = array_values(array_intersect(WebhookPayload::CATEGORIES, $markers['kategoria'] ?? []));
         sort($categories);
 
         $verdict = [

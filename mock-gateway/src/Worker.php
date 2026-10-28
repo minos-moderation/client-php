@@ -15,7 +15,8 @@ use Minos\Client\Signature;
  *   `X-Wergiliusz-Podpis`; any 2xx counts as delivered and the answer is not read;
  * - a failed delivery is retried with a doubling pause (from `MINOS_MOCK_BACKOFF_S`, at
  *   most two minutes) until the entry's TTL — then the entry and its verdict are gone;
- * - every attempt is signed anew, with its own timestamp;
+ * - every attempt is signed anew, with the time it is made: a pass over many entries and
+ *   slow receivers takes minutes, and a signature from the pass's start would go stale;
  * - an entry nobody delivers disappears with its TTL, with no webhook at all;
  * - a comment whose profile the key no longer allows (`MINOS_MOCK_PROFILES` changed after
  *   it was accepted) gets `nieocenione`;
@@ -51,31 +52,44 @@ final class Worker
     /** @var callable(string, array<int,string>, string): int */
     private $transport;
 
+    /** @var callable(): float */
+    private $clock;
+
     /**
      * @param Config        $cfg       The configuration.
      * @param Queue|null    $queue     The queue; the configured file by default.
      * @param callable|null $transport `fn(string $url, array $headers, string $body): int` —
      *     the HTTP status, or 0 when there was no answer. cURL by default.
+     * @param callable|null $clock     `fn(): float` — seconds, read before each entry to
+     *     measure how far the pass has gone. `microtime(true)` by default.
      */
-    public function __construct(Config $cfg, ?Queue $queue = null, ?callable $transport = null)
+    public function __construct(Config $cfg, ?Queue $queue = null, ?callable $transport = null,
+        ?callable $clock = null)
     {
         $this->cfg = $cfg;
         $this->queue = $queue ?? new Queue($cfg->queuePath());
         $this->transport = $transport ?? [new CurlTransport($cfg->webhookTimeoutS), 'post'];
+        $this->clock = $clock ?? static function (): float {
+            return microtime(true);
+        };
     }
 
     /**
-     * Processes every entry that is due.
+     * Processes every entry that is due. Each entry is handled at its own time: the pass's
+     * start plus the whole seconds the pass has taken so far, so a delivery is signed, and
+     * its next attempt scheduled, at the moment it is made.
      *
-     * @param int $now Unix seconds.
+     * @param int $now Unix seconds when the pass starts.
      * @return array<int,array{id:string,wynik:string,status:int}> One line per entry touched.
      */
     public function runOnce(int $now): array
     {
         $report = [];
+        $started = (float)call_user_func($this->clock);
         foreach ($this->queue->all() as $entry) {
+            $at = $now + (int)floor((float)call_user_func($this->clock) - $started);
             try {
-                $line = $this->process($entry, $now);
+                $line = $this->process($entry, $at);
             } catch (\Throwable $e) {
                 // A broken entry must not hold back the ones behind it until their TTL.
                 $this->queue->remove((string)($entry['entry'] ?? ''));
@@ -127,6 +141,10 @@ final class Worker
             ? Verdicts::payload($entry['item_id'], $entry['text'], ($entry['context'] ?? null) !== null)
             : ['id' => $entry['item_id'], 'status' => 'nieocenione'];
         $body = (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (in_array('nieczytelne', $flags, true)) {
+            // Signed like any delivery, but no payload: the body cut in half (still UTF-8).
+            $body = mb_strcut($body, 0, intdiv(strlen($body), 2), 'UTF-8');
+        }
         $secret = in_array('zly-podpis', $flags, true)
             ? 'nie-ten-sekret-' . $this->cfg->webhookSecret
             : $this->cfg->webhookSecret;

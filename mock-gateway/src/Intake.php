@@ -88,6 +88,14 @@ final class Intake
     /** The message of a profile the key lists but the B2B list does not. */
     private const NOT_B2B_PROFILE = 'Ten profil nie jest dostępny dla kluczy B2B (dozwolone: forum_adult, forum_teen, blog_comments, ig_comments, api_generic).';
 
+    /**
+     * Mock-only answers {@see FORCE_HEADER} may ask for on either route, which no contract
+     * code describes: a `503` whose body has no `kod` (`503-bez-kodu`), and a `503` whose
+     * body is not JSON at all (`503-nie-json`), as a proxy in front of a gateway may send.
+     * A client tells a `503` by its status, never by its code or its body.
+     */
+    public const MOCK_SCENARIOS = ['503-bez-kodu', '503-nie-json'];
+
     /** Codes only the batch route sends ({@see batchCodes}). */
     private const BATCH_ONLY = [
         'brak_webhooka', 'brak_elementow', 'bledny_identyfikator', 'powtorzony_identyfikator',
@@ -162,7 +170,8 @@ final class Intake
      * @param string|null $force  The {@see FORCE_HEADER} header, or null.
      * @param string      $body   The raw body.
      * @param int         $now    Unix seconds.
-     * @return array{status:int,body:array} `202 {przyjete}` or `{blad}`.
+     * @return array{status:int,body:array,raw?:string} `202 {przyjete}` or `{blad}` (or a
+     *     forced {@see MOCK_SCENARIOS} answer).
      */
     public function handle(?string $key, ?string $force, string $body, int $now): array
     {
@@ -201,8 +210,9 @@ final class Intake
      * @param string|null $key   The `X-Gateway-Key` header, or null.
      * @param string|null $force The {@see FORCE_HEADER} header, or null.
      * @param string      $body  The raw body.
-     * @return array{status:int,body:array} `200` with the verdict ({@see Verdicts::verdict}),
-     *     or `{blad}` without `element`.
+     * @return array{status:int,body:array,raw?:string} `200` with the verdict
+     *     ({@see Verdicts::verdict}), or `{blad}` without `element` (or a forced
+     *     {@see MOCK_SCENARIOS} answer).
      */
     public function handleSync(?string $key, ?string $force, string $body): array
     {
@@ -415,11 +425,19 @@ final class Intake
      * @param string $code    The header's code.
      * @param bool   $inBatch Whether the route takes a batch. There, a forced item refusal
      *     names the position a real one could; the synchronous route names none.
-     * @return array{status:int,body:array} The refusal, or `400 atrapa_nieznany_kod` for a
-     *     code the route never sends.
+     * @return array{status:int,body:array,raw?:string} The refusal, one of
+     *     {@see MOCK_SCENARIOS} (`raw`: a body to send as it is, as `text/html`), or
+     *     `400 atrapa_nieznany_kod` for a code the route never sends.
      */
     private function forced(string $code, bool $inBatch): array
     {
+        if ($code === '503-bez-kodu') {
+            return ['status' => 503, 'body' => ['blad' => ['komunikat' => 'Usługa jest chwilowo niedostępna.']]];
+        }
+        if ($code === '503-nie-json') {
+            return ['status' => 503, 'body' => [],
+                'raw' => "<html><body><h1>503 Service Unavailable</h1></body></html>\n"];
+        }
         if (!in_array($code, $inBatch ? self::batchCodes() : self::syncCodes(), true)) {
             return ['status' => 400, 'body' => ['blad' => [
                 'kod'       => 'atrapa_nieznany_kod',

@@ -149,6 +149,51 @@ final class EndToEndTest extends MockTestCase
         self::assertSame([403, 'tylko_klucze_platne'], [$status, $answer['blad']['kod']]);
     }
 
+    /**
+     * The mock-only answers a client must survive: a `503` without a `kod`, a `503` that is
+     * not JSON, and a delivery that is signed but carries no readable payload.
+     */
+    public function testTheMockOnlyFailuresOverHttp(): void
+    {
+        mkdir($this->dir, 0700, true);
+        $received = $this->dir . '/received.jsonl';
+        $receiverPort = $this->serve(__DIR__ . '/fixtures', 'receiver.php', ['RECEIVER_OUT' => $received]);
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, [
+            'MINOS_MOCK_WEBHOOK_URL' => "http://127.0.0.1:{$receiverPort}/webhook",
+            'MINOS_MOCK_DATA_DIR'    => $this->dir,
+            'MINOS_MOCK_DELAY_S'     => '0',
+            'MINOS_MOCK_SYNC'        => '1',
+        ]);
+        $key = 'X-Gateway-Key: ' . Config::DEFAULT_KEY;
+
+        foreach (['/api/v1/b2b/oceny', '/api/v1/b2b/ocena'] as $path) {
+            [$status, $body, $type] = $this->postRaw("http://127.0.0.1:{$port}{$path}",
+                [$key, 'X-Minos-Mock-Error: 503-bez-kodu'], '{}');
+            self::assertSame(503, $status, $path);
+            self::assertStringStartsWith('application/json', $type, $path);
+            self::assertArrayNotHasKey('kod', json_decode($body, true)['blad'], $path);
+
+            [$status, $body, $type] = $this->postRaw("http://127.0.0.1:{$port}{$path}",
+                [$key, 'X-Minos-Mock-Error: 503-nie-json'], '{}');
+            self::assertSame(503, $status, $path);
+            self::assertStringStartsWith('text/html', $type, $path);
+            self::assertNull(json_decode($body), $path);
+        }
+
+        [$status] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/oceny", [$key],
+            ['elementy' => [['id' => 'k-1', 'tekst' => 'x [minos:nieczytelne]']]]);
+        self::assertSame(202, $status);
+        exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../../mock-gateway/bin/worker.php') . ' --once 2>&1',
+            $output, $exit);
+        self::assertSame(0, $exit, implode("\n", $output));
+        $deliveries = file($received, FILE_IGNORE_NEW_LINES) ?: [];
+        self::assertCount(1, $deliveries);
+        $delivery = json_decode($deliveries[0], true);
+        self::assertSame(Signature::OK, Signature::check(Config::DEFAULT_SECRET, (string)$delivery['podpis'],
+            $delivery['body'], time()));
+        self::assertNull(WebhookPayload::parse($delivery['body']), 'signed, but no payload');
+    }
+
     public function testAnotherPathIs404(): void
     {
         $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
@@ -160,6 +205,11 @@ final class EndToEndTest extends MockTestCase
      * Starts PHP's built-in server and waits until it answers. The variables are also put
      * into this process's environment, for the worker CLI the test runs afterwards.
      *
+     * The port is one the system just gave out as free, and it counts as the server's only
+     * while the started process is still running: a server that could not bind (another
+     * process took the port meanwhile) exits, and then the test tries another port instead
+     * of talking to whatever answers there.
+     *
      * @param array<string,string> $env
      * @return int The port.
      */
@@ -170,7 +220,7 @@ final class EndToEndTest extends MockTestCase
             $this->env[] = $name;
         }
         for ($try = 0; $try < 5; $try++) {
-            $port = random_int(20000, 40000);
+            $port = self::freePort();
             $command = [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', $docroot];
             if ($router !== null) {
                 $command[] = $docroot . '/' . $router;
@@ -180,12 +230,15 @@ final class EndToEndTest extends MockTestCase
             $server = proc_open($command, [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
                 $pipes, null, getenv() + $env);
             self::assertIsResource($server);
-            for ($wait = 0; $wait < 50; $wait++) {
+            for ($wait = 0; $wait < 50 && proc_get_status($server)['running']; $wait++) {
                 $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
                 if ($socket !== false) {
                     fclose($socket);
-                    $this->servers[] = [$server, $port];
-                    return $port;
+                    if (proc_get_status($server)['running']) {
+                        $this->servers[] = [$server, $port];
+                        return $port;
+                    }
+                    break;
                 }
                 usleep(100000);
             }
@@ -193,6 +246,44 @@ final class EndToEndTest extends MockTestCase
             proc_close($server);
         }
         self::fail('the built-in server did not start');
+    }
+
+    /**
+     * A port the system reports free on 127.0.0.1 at this moment.
+     */
+    private static function freePort(): int
+    {
+        $probe = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+        self::assertIsResource($probe, "no free port: {$errstr}");
+        $name = (string)stream_socket_get_name($probe, false);
+        fclose($probe);
+        $port = (int)substr($name, (int)strrpos($name, ':') + 1);
+        self::assertGreaterThan(0, $port);
+        return $port;
+    }
+
+    /**
+     * A POST whose answer is returned as it came.
+     *
+     * @param array<int,string> $headers
+     * @return array{0:int,1:string,2:string} The status, the raw body and the content type.
+     */
+    private function postRaw(string $url, array $headers, string $body): array
+    {
+        $handle = curl_init($url);
+        curl_setopt_array($handle, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_HTTPHEADER     => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_PROXY          => '',
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $answer = (string)curl_exec($handle);
+        $status = (int)curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $type = (string)curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
+        curl_close($handle);
+        return [$status, $answer, $type];
     }
 
     /**
