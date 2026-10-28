@@ -12,6 +12,7 @@ to develop against.
 | `vectors/` | The gateway's test vectors (the webhook signature) |
 | `mock-gateway/` | A local stand-in for the gateway's B2B routes (batch and synchronous) and its delivery worker |
 | `tests/` | PHPUnit: the library, the mock, the contract document, the Claude Code rules |
+| `CHANGELOG.md` | What each release contains, its known differences from the gateway, and the version policy (0.x) |
 
 ## Receiving a verdict
 
@@ -22,17 +23,24 @@ checklist is the short version of this:
 use Minos\Client\Signature;
 use Minos\Client\WebhookPayload;
 
+// $webhookSecret: the secret stored for this forum's key, as the forum's storage returns it
 $body = file_get_contents('php://input');                 // the raw bytes, before any parsing
 $header = $_SERVER['HTTP_X_WERGILIUSZ_PODPIS'] ?? '';
-if (!Signature::verify($webhookSecret, $header, $body, time())) {
-    http_response_code(401);                              // the gateway retries
-    exit;
+if (!is_string($webhookSecret) || $webhookSecret === ''
+    || !Signature::verify($webhookSecret, $header, $body, time())) {
+    http_response_code(401);                              // no secret, or a bad signature
+    exit;                                                 // the gateway retries
 }
 $verdict = WebhookPayload::parse($body);                  // null: not a usable payload
 // Drop an unknown or already handled $verdict['id'], then apply
 // $verdict['kwalifikacja'], or the plugin's fail-open/fail-closed setting when
 // $verdict['status'] is 'nieocenione'. Answer 2xx quickly.
 ```
+
+A missing or empty stored secret is always a refusal, never a valid signature: anyone can
+sign with an empty secret, a `false` that a forum's storage returns for a missing setting
+would be read as one, and `Signature::verify`, the same code as the contract's reference
+verifier, leaves that guard to the caller.
 
 ## Tests
 
@@ -45,10 +53,12 @@ CI runs the suite on PHP 7.4 and 8.3.
 
 ## The mock gateway
 
-The real B2B routes, the batch and the synchronous one, exist on the gateway but are off in
-production (see the contract's status). The mock answers like them: the same checks, the
-same error codes, and verdicts delivered to your webhook, signed the same way, or answered
-at once on the synchronous route. It needs no `composer install`.
+The real batch route has been open in production since 2026-10-25 and the synchronous one
+is still closed (see the contract's status); never test against them. The mock answers as
+[the contract's copy](docs/contract.md) describes the two routes, with the checks and error
+codes it lists, and verdicts delivered to your webhook, signed the same way, or answered at
+once on the synchronous route. What the gateway has added since the copy's date, listed in
+its status, is not in the mock yet. It needs no `composer install`.
 
 ```bash
 # 1. The API (terminal 1)
@@ -95,8 +105,12 @@ To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` wi
 from that route's error table in the contract: for example `kolejka_pelna` or
 `limit_minutowy_klucza` on the batch route, `silnik_przeciazony` or `tylko_klucze_platne`
 on the synchronous one. A code the route never sends (`kolejka_pelna` on the synchronous
-route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route the key and its
-class are checked first, as in the gateway.
+route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route a missing or
+unknown key is refused first (`401 brak_klucza`), as in the gateway. The gateway then
+checks the route's own switch: closed, it answers `404 nie_znaleziono` to any recognised
+key, whatever its class. The mock serves the route and has no switch: it checks the key's
+class next (`403 tylko_klucze_platne`), so a forced `nie_znaleziono` reaches a paid key
+only.
 
 Settings (environment):
 
@@ -107,7 +121,7 @@ Settings (environment):
 | `MINOS_MOCK_KEY` | `wgb2b_atrapa_minos_0000000000000000` |
 | `MINOS_MOCK_KEY_CLASS` | `b2b_paid`. With `b2b_free` (or any other value) the synchronous route answers `403 tylko_klucze_platne`; batches are accepted either way. |
 | `MINOS_MOCK_PROFILES` | `forum_adult,forum_teen` (the first is the default) |
-| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `500`, the gateway's defaults |
+| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `500`. The first two are the gateway's defaults; `500` is the mock's own, while the gateway's queue holds 350 today (see the contract's status), synced in 0.2.0 |
 | `MINOS_MOCK_TTL_S` | `900` |
 | `MINOS_MOCK_DELAY_S` | `2`: seconds before the first delivery attempt |
 | `MINOS_MOCK_BACKOFF_S` | `5`: first retry pause, which doubles up to 120 s |
