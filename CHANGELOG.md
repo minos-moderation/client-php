@@ -79,13 +79,15 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
   security reviews of 2026-09-30 and the owner's decisions of 2026-10-28, each with a stable
   identifier (`F1`…`D2`) that the plugins' compliance tables map to their code and tests.
   It is their one public source; a change to one rule is a decision for every plugin.
-  Three rules were made precise before the tag, after the plugins' reviews: F7 (a bare
-  address the reader sees is text; a post whose only visible content is an image, a video,
-  an attachment or a link with no visible label goes to the failure mode, and nothing is
-  sent), A8 (the 30 days cover the plugin's own data; what the platform keeps in its own
-  records follows the forum's rules, and each plugin's README names what outlives the 30
-  days) and S1 (`title` and `alt` hints are sent next to their word; an `href`, an HTML
-  comment or an attribute the sanitiser removes never is).
+  Three rules were made precise after the plugins' reviews, so a plugin that mapped them
+  before 0.2.0 re-checks F7, A8 and S1: F7 (a bare URL the reader sees is text; a post
+  whose only visible content is an image, a video, an attachment or a link with no visible
+  label goes to the failure mode and nothing is sent, even when the image carries an `alt`
+  or `title`), A8 (the 30 days cover the plugin's own data; what the platform keeps in its
+  own records follows the forum's rules, and each plugin's README names what outlives the
+  30 days) and S1 (`title` and `alt` hints are sent next to their word; an `href`, an HTML
+  comment and an attribute the sanitiser removes are never added). P1 was reworded so that
+  it names no tag.
 - The release archive leaves out `tests/`, `.claude/`, `.github/`, the `CLAUDE.md` files and
   `phpunit.xml.dist`; it keeps `src/`, `docs/`, `vectors/` and `mock-gateway/`, which the
   plugins use from `vendor/`.
