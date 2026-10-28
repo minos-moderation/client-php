@@ -22,17 +22,22 @@ checklist is the short version of this:
 use Minos\Client\Signature;
 use Minos\Client\WebhookPayload;
 
+// $webhookSecret: the secret stored for this forum's key, a string ('' when none is stored)
 $body = file_get_contents('php://input');                 // the raw bytes, before any parsing
 $header = $_SERVER['HTTP_X_WERGILIUSZ_PODPIS'] ?? '';
-if (!Signature::verify($webhookSecret, $header, $body, time())) {
-    http_response_code(401);                              // the gateway retries
-    exit;
+if ($webhookSecret === '' || !Signature::verify($webhookSecret, $header, $body, time())) {
+    http_response_code(401);                              // no secret, or a bad signature
+    exit;                                                 // the gateway retries
 }
 $verdict = WebhookPayload::parse($body);                  // null: not a usable payload
 // Drop an unknown or already handled $verdict['id'], then apply
 // $verdict['kwalifikacja'], or the plugin's fail-open/fail-closed setting when
 // $verdict['status'] is 'nieocenione'. Answer 2xx quickly.
 ```
+
+A missing stored secret is always a refusal, never a valid signature: anyone can sign with
+an empty secret, and `Signature::verify`, the same code as the contract's reference
+verifier, leaves that guard to the caller.
 
 ## Tests
 
