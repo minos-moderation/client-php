@@ -23,10 +23,11 @@ checklist is the short version of this:
 use Minos\Client\Signature;
 use Minos\Client\WebhookPayload;
 
-// $webhookSecret: the secret stored for this forum's key, a string ('' when none is stored)
+// $webhookSecret: the secret stored for this forum's key, as the forum's storage returns it
 $body = file_get_contents('php://input');                 // the raw bytes, before any parsing
 $header = $_SERVER['HTTP_X_WERGILIUSZ_PODPIS'] ?? '';
-if ($webhookSecret === '' || !Signature::verify($webhookSecret, $header, $body, time())) {
+if (!is_string($webhookSecret) || $webhookSecret === ''
+    || !Signature::verify($webhookSecret, $header, $body, time())) {
     http_response_code(401);                              // no secret, or a bad signature
     exit;                                                 // the gateway retries
 }
@@ -36,8 +37,9 @@ $verdict = WebhookPayload::parse($body);                  // null: not a usable 
 // $verdict['status'] is 'nieocenione'. Answer 2xx quickly.
 ```
 
-A missing stored secret is always a refusal, never a valid signature: anyone can sign with
-an empty secret, and `Signature::verify`, the same code as the contract's reference
+A missing or empty stored secret is always a refusal, never a valid signature: anyone can
+sign with an empty secret, a `false` that a forum's storage returns for a missing setting
+would be read as one, and `Signature::verify`, the same code as the contract's reference
 verifier, leaves that guard to the caller.
 
 ## Tests
@@ -119,7 +121,7 @@ Settings (environment):
 | `MINOS_MOCK_KEY` | `wgb2b_atrapa_minos_0000000000000000` |
 | `MINOS_MOCK_KEY_CLASS` | `b2b_paid`. With `b2b_free` (or any other value) the synchronous route answers `403 tylko_klucze_platne`; batches are accepted either way. |
 | `MINOS_MOCK_PROFILES` | `forum_adult,forum_teen` (the first is the default) |
-| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `500`, the gateway's defaults |
+| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `500`. The first two are the gateway's defaults; `500` is the mock's own, while the gateway's queue holds 350 today (see the contract's status), synced in 0.2.0 |
 | `MINOS_MOCK_TTL_S` | `900` |
 | `MINOS_MOCK_DELAY_S` | `2`: seconds before the first delivery attempt |
 | `MINOS_MOCK_BACKOFF_S` | `5`: first retry pause, which doubles up to 120 s |
