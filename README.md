@@ -195,7 +195,7 @@ Settings (environment):
 | `MINOS_MOCK_WEBHOOK_URL` | none. Without it, every batch gets `403 brak_webhooka`. |
 | `MINOS_MOCK_WEBHOOK_SECRET` | `atrapa-minos-sekret-webhooka-tylko-lokalnie` |
 | `MINOS_MOCK_KEY` | `wgb2b_atrapa_minos_0000000000000000` |
-| `MINOS_MOCK_KEY_CLASS` | `b2b_paid`. With `b2b_free` (or any other value) the synchronous route answers `403 tylko_klucze_platne`; batches are accepted either way. |
+| `MINOS_MOCK_KEY_CLASS` | `b2b_paid`. With `b2b_free` (or any other value) the synchronous route, once opened (`MINOS_MOCK_SYNC=1`), answers `403 tylko_klucze_platne`; closed, it answers `404 nie_znaleziono` whatever the class. Batches are accepted either way. |
 | `MINOS_MOCK_SYNC` | `0`: the synchronous route is closed, as in production, and answers `404 nie_znaleziono` to the key. `1` opens it. |
 | `MINOS_MOCK_PROFILES` | `forum_adult,forum_teen` (the first is the default) |
 | `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `350`, the gateway's |

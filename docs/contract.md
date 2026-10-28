@@ -279,8 +279,9 @@ every delivery:
   path and query, never to the stored string;
 - the host is on the key's list, checked before any DNS query;
 - every address the host resolves to (A and AAAA) is public: no private, loopback,
-  link-local, carrier-grade NAT, multicast, reserved or documentation address. One such
-  address among public ones refuses the delivery.
+  link-local (cloud metadata included), carrier-grade NAT, multicast, reserved,
+  documentation or IPv4-in-IPv6 address. One such address among public ones refuses the
+  delivery.
 
 The connection then goes to exactly the checked addresses, so a DNS answer that changes
 between the check and the connection cannot redirect it, and TLS still verifies the
