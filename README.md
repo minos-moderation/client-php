@@ -12,6 +12,7 @@ to develop against.
 | `vectors/` | The gateway's test vectors (the webhook signature) |
 | `mock-gateway/` | A local stand-in for the gateway's B2B routes (batch and synchronous) and its delivery worker |
 | `tests/` | PHPUnit: the library, the mock, the contract document, the Claude Code rules |
+| `CHANGELOG.md` | What each release contains, its known differences from the gateway, and the version policy (0.x) |
 
 ## Receiving a verdict
 
