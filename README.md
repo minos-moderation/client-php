@@ -45,10 +45,12 @@ CI runs the suite on PHP 7.4 and 8.3.
 
 ## The mock gateway
 
-The real batch route is open in production and the synchronous one is still closed (see
-the contract's status); never test against them. The mock answers like them: the same
-checks, the same error codes, and verdicts delivered to your webhook, signed the same way,
-or answered at once on the synchronous route. It needs no `composer install`.
+The real batch route has been open in production since 2026-10-25 and the synchronous one
+is still closed (see the contract's status); never test against them. The mock answers as
+[the contract's copy](docs/contract.md) describes the two routes, with the checks and error
+codes it lists, and verdicts delivered to your webhook, signed the same way, or answered at
+once on the synchronous route. What the gateway has added since the copy's date, listed in
+its status, is not in the mock yet. It needs no `composer install`.
 
 ```bash
 # 1. The API (terminal 1)
@@ -95,8 +97,12 @@ To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` wi
 from that route's error table in the contract: for example `kolejka_pelna` or
 `limit_minutowy_klucza` on the batch route, `silnik_przeciazony` or `tylko_klucze_platne`
 on the synchronous one. A code the route never sends (`kolejka_pelna` on the synchronous
-route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route the key and its
-class are checked first, as in the gateway.
+route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route a missing or
+unknown key is refused first (`401 brak_klucza`), as in the gateway. The gateway then
+checks the route's own switch: closed, it answers `404 nie_znaleziono` to any recognised
+key, whatever its class. The mock serves the route and has no switch: it checks the key's
+class next (`403 tylko_klucze_platne`), so a forced `nie_znaleziono` reaches a paid key
+only.
 
 Settings (environment):
 

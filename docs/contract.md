@@ -12,23 +12,51 @@ enumeration values stay exactly as below, whatever the naming of the code.
 
 ## Status
 
-The batch route, [`POST /api/v1/b2b/oceny`](#post-apiv1b2boceny), is **open in production**
-since 2026-10-25. It is the route the Minos plugins use: the gateway accepts the items at
-once and delivers each verdict to the key's webhook, signed.
+The batch route, [`POST /api/v1/b2b/oceny`](#post-apiv1b2boceny), has been **open in
+production** since 2026-10-25. It is the route the Minos plugins use: the gateway accepts
+the items at once and delivers each verdict to the key's webhook, signed.
 
 The synchronous route, [`POST /api/v1/b2b/ocena`](#post-apiv1b2bocena), exists on the
-gateway but stays **closed in production** until a decision of its own: it answers
-`404 nie_znaleziono` to a recognised key, whatever the body (a missing or unknown key gets
-`401 brak_klucza` first). It is described below for when it opens; the mock gateway
-answers it already.
+gateway but stays **closed in production** until a decision of its own. It has a switch
+of its own, apart from the batch route's; while that is off, the route answers
+`404 nie_znaleziono` to any recognised key, whatever its class and the body (a missing or
+unknown key gets `401 brak_klucza` first). It is described below for when it opens; the
+mock gateway answers it already.
 
 Develop and test against the mock gateway (`mock-gateway/`, see the README), never against
 the production gateway.
 
 This copy follows the gateway's documentation as of 2026-10-01. Since then the gateway has
-added an optional context for an item, a personal-data note in the verdict and higher body
-ceilings, which this copy does not describe yet. A client built on it keeps working: the
-additions are optional, and `WebhookPayload::parse` ignores a key it does not know.
+made these changes, which the sections below do not describe yet:
+
+- **An optional conversation context** for a comment, in a batch item or a synchronous
+  request: the conversation before it, with two new refusals for a malformed or too long
+  one (`400 bledny_kontekst`, `413 za_duzy_kontekst`) and higher body ceilings to fit it
+  (1,727,104 bytes for a batch, 101,920 for the synchronous route).
+- **A personal-data note in the verdict**, `dane_osobowe`, only for a comment sent with
+  that context.
+- **`wsparcie`** is also `true` when the engine rates a comment a crisis under a category
+  the gateway cannot name yet; `kategorie` then lacks it.
+- **A fixed list of profiles** that a B2B key may use, the forum profiles `forum_adult` and
+  `forum_teen` among them. Any other profile is refused with `403 profil_niedozwolony`,
+  even when the key's list names it, and a queued comment whose profile the key no longer
+  allows gets `nieocenione`.
+- **Personal data** in a comment (a phone number, an address and the like) is replaced
+  before the engine reads it, and `ocenzurowany` masks the original. When that step cannot
+  vouch for a text, the comment is `nieocenione`: a new cause of it.
+- **The queue** holds 350 comments (`429 kolejka_pelna` past that), and the gateway
+  assesses about 30 of them a minute, so a full queue takes about 12 minutes, inside the
+  entries' TTL.
+- **The synchronous route's own switch**, above.
+
+A client built on this copy keeps working, by its [receiving
+checklist](#a-plugins-receiving-checklist) and each route's rules for a refusal. It sends
+no context, so it meets neither the new refusals nor the note, and its requests stay under
+the old, lower ceilings. `WebhookPayload::parse` ignores a key it does not know. Every new
+`nieocenione` goes to the plugin's fail-open or fail-closed setting and every `wsparcie`
+to support, whatever the verdict (step 4). A refused profile is a `4xx`, shown to the
+forum's administrator as a configuration error, and a full queue is a `429`, retried after
+`ponow_za_s`.
 
 ## The key
 
@@ -302,15 +330,17 @@ The same shape, `{"blad": {"kod", "komunikat", "ponow_za_s"?}}`, with no `elemen
 | 413 | `za_duze_zadanie` | the body is over its ceiling, before it is parsed: 53,408 bytes, so the longest comment fits however it is escaped (3000 characters as escaped surrogate pairs, the default of `json_encode`, are 36,012 bytes) |
 | 429 | `limit_minutowy_klucza` / `limit_dobowy_klucza` / `limit_w_locie_klucza` / `limit_globalny_b2b` | the key's limits, or the shared B2B ceiling (`ponow_za_s`) |
 | 503 | `silnik_przeciazony` | the engine cannot take the comment right now, and nothing was assessed (`ponow_za_s`, in the body only) |
-| 404 | `nie_znaleziono` | B2B is off on this gateway |
+| 404 | `nie_znaleziono` | the route is closed (see [Status](#status)), or B2B is off on this gateway: any recognised key gets it, whatever its class and the body, and nothing is assessed |
 
-The checks run in this order:
-1. the key and its class;
-2. the body's size;
-3. the JSON;
-4. the text;
-5. the profile;
-6. the key's own limits and the global ceiling.
+A missing or unknown key gets `401 brak_klucza` before any other check. Then the checks
+run in this order:
+1. the route's switch: closed, the route answers `404 nie_znaleziono`;
+2. the key's surface and class;
+3. the body's size;
+4. the JSON;
+5. the text;
+6. the profile;
+7. the key's own limits and the global ceiling.
 
 **What a client does with a refusal:**
 - On `429` and **every** `503`, whatever its `kod`, the comment has no verdict yet: apply
