@@ -139,8 +139,8 @@ rule is stated, and the [index](#index) names them all.
 ## Packaging
 
 - **P1** The release archive ships no `composer.lock`, tests or mock gateway. `client-php`
-  is pinned by `composer.lock` at `dev-main` (a commit) until the tag `v0.1.0` exists, then
-  by the tag.
+  is pinned by `composer.lock` at `dev-main` (a commit) until a tag of this client exists,
+  and at a tag once one does.
 
 ## The rules themselves
 
@@ -195,6 +195,6 @@ rule is stated, and the [index](#index) names them all.
 | `A6` | a late verdict also applies to a post the failure mode held | 2026-10-28 |
 | `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | 2026-10-28 |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | 2026-10-28, extended 2026-10-28 |
-| `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30 |
+| `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30, reworded 2026-10-28 |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | 2026-09-30, reworded 2026-10-28 |
 | `D2` | shared compliance scenarios in `scenarios/` | 2026-10-28 |
