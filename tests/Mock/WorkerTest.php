@@ -143,10 +143,72 @@ final class WorkerTest extends MockTestCase
         self::assertSame([], $this->sent);
     }
 
-    private function accept(Config $cfg, string $id, string $text): void
+    /**
+     * One broken entry (here a text that is not a string, as no intake writes it) is
+     * reported and dropped; the entries behind it are delivered in the same pass.
+     */
+    public function testABrokenEntryNeverHoldsBackTheOthers(): void
     {
-        $answer = (new Intake($cfg))->handle($cfg->key, null,
-            (string)json_encode(['elementy' => [['id' => $id, 'tekst' => $text]]]), self::NOW);
+        $cfg = $this->config();
+        $this->accept($cfg, 'k-1', 'x');
+        $this->queue($cfg)->append([['item_id' => 'k-2', 'text' => ['nie napis'], 'profile' => 'forum_adult',
+            'meta' => null, 'context' => null, 'received_at' => self::NOW, 'next_at' => self::NOW]]);
+        $this->accept($cfg, 'k-3', 'x [minos:kategoria]');
+
+        $report = $this->worker($cfg)->runOnce(self::NOW);
+
+        self::assertSame([
+            ['id' => 'k-1', 'wynik' => Worker::DELIVERED, 'status' => 204],
+            ['id' => 'k-2', 'wynik' => Worker::FAILED, 'status' => 0],
+            ['id' => 'k-3', 'wynik' => Worker::DELIVERED, 'status' => 204],
+        ], $report);
+        self::assertSame([], WebhookPayload::parse($this->sent[1]['body'])['kategorie']);
+        self::assertSame(0, $this->queue($cfg)->length(), 'the broken entry is gone too');
+    }
+
+    /**
+     * A comment whose profile the key no longer allows when the worker reaches it (the key's
+     * list changed after it was accepted) is never assessed: `nieocenione`.
+     */
+    public function testACommentWhoseProfileIsNoLongerAllowedIsNieocenione(): void
+    {
+        $this->accept($this->config(), 'k-1', 'x [minos:blokuj]', 'forum_teen');
+        $narrowed = $this->config(['MINOS_MOCK_PROFILES' => 'forum_adult']);
+
+        $this->worker($narrowed)->runOnce(self::NOW);
+
+        self::assertCount(1, $this->sent);
+        self::assertSame('{"id":"k-1","status":"nieocenione"}', $this->sent[0]['body']);
+    }
+
+    public function testAQueuedContextReachesTheVerdict(): void
+    {
+        $cfg = $this->config();
+        $this->accept($cfg, 'k-1', 'dzwoń [minos:dane-osobowe=telefon]', null, [['rola' => 'inny', 'tekst' => 'podaj numer']]);
+        $this->accept($cfg, 'k-2', 'dzwoń [minos:dane-osobowe=telefon]');
+
+        $this->worker($cfg)->runOnce(self::NOW);
+
+        $read = array_map(static function (array $delivery): array {
+            return WebhookPayload::parse($delivery['body']);
+        }, $this->sent);
+        self::assertSame(['rodzaj' => 'telefon', 'reakcja' => 'ukryj'], $read[0]['dane_osobowe']);
+        self::assertSame([], $read[1]['dane_osobowe'], 'no context, no section');
+    }
+
+    /**
+     * @param array<int,array{rola:string,tekst:string}>|null $context
+     */
+    private function accept(Config $cfg, string $id, string $text, ?string $profile = null, ?array $context = null): void
+    {
+        $item = ['id' => $id, 'tekst' => $text];
+        if ($profile !== null) {
+            $item['profil'] = $profile;
+        }
+        if ($context !== null) {
+            $item['kontekst'] = $context;
+        }
+        $answer = (new Intake($cfg))->handle($cfg->key, null, (string)json_encode(['elementy' => [$item]]), self::NOW);
         self::assertSame(202, $answer['status']);
     }
 

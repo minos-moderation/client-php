@@ -23,7 +23,62 @@ final class WebhookPayloadTest extends TestCase
             'ocenzurowany' => 'no to jest ███████ pomysł',
             'wsparcie'     => false,
             'wersja'       => '3f0c9a41d2b7e8c5',
+            'dane_osobowe' => [],
         ], WebhookPayload::parse($vector['body']));
+    }
+
+    /**
+     * The `dane_osobowe` section adds to the verdict and changes nothing else of it.
+     */
+    public function testAPersonalDataSectionLeavesTheVerdictAsItIs(): void
+    {
+        $body = self::vectorBody();
+        $withSection = substr($body, 0, -1) . ',"dane_osobowe":{"rodzaj":"telefon","reakcja":"ukryj"}}';
+        self::assertNotSame($body, $withSection);
+
+        $plain = WebhookPayload::parse($body);
+        $read = WebhookPayload::parse($withSection);
+        self::assertSame(['rodzaj' => 'telefon', 'reakcja' => 'ukryj'], $read['dane_osobowe']);
+        unset($read['dane_osobowe'], $plain['dane_osobowe']);
+        self::assertSame($plain, $read);
+    }
+
+    /**
+     * An answer the library does not know is no answer (`nieocenione`); a kind it does not
+     * know is kept, because the list may grow; a section that is there is never read as none.
+     */
+    public function testAPersonalDataSectionNeverPassesAnUnknownAnswer(): void
+    {
+        $cases = [
+            '{"rodzaj":"adres","reakcja":"pozostaw"}'    => ['rodzaj' => 'adres', 'reakcja' => 'pozostaw'],
+            '{"rodzaj":"pesel","reakcja":"nieocenione"}' => ['rodzaj' => 'pesel', 'reakcja' => 'nieocenione'],
+            '{"rodzaj":"telefon","reakcja":"usun"}'      => ['rodzaj' => 'telefon', 'reakcja' => 'nieocenione'],
+            '{"rodzaj":"telefon","reakcja":"UKRYJ"}'     => ['rodzaj' => 'telefon', 'reakcja' => 'nieocenione'],
+            '{"rodzaj":"telefon"}'                       => ['rodzaj' => 'telefon', 'reakcja' => 'nieocenione'],
+            '{"rodzaj":"nowy_rodzaj","reakcja":"ukryj"}' => ['rodzaj' => 'nowy_rodzaj', 'reakcja' => 'ukryj'],
+            '{"rodzaj":7,"reakcja":"ukryj"}'             => ['rodzaj' => null, 'reakcja' => 'ukryj'],
+            '{}'                                         => ['rodzaj' => null, 'reakcja' => 'nieocenione'],
+            '"telefon"'                                  => ['rodzaj' => null, 'reakcja' => 'nieocenione'],
+            'false'                                      => ['rodzaj' => null, 'reakcja' => 'nieocenione'],
+            'null'                                       => [],
+        ];
+        foreach ($cases as $section => $expected) {
+            $read = WebhookPayload::parse(substr(self::vectorBody(), 0, -1) . ',"dane_osobowe":' . $section . '}');
+            self::assertSame($expected, $read['dane_osobowe'], $section);
+            self::assertSame('ocenzurowane', $read['kwalifikacja'], $section);
+        }
+        self::assertSame([], WebhookPayload::parse('{"id":"k","status":"nieocenione","dane_osobowe":{"rodzaj":"adres","reakcja":"ukryj"}}')['dane_osobowe'],
+            'no verdict, no section');
+    }
+
+    /**
+     * The body of the gateway's signature vector.
+     */
+    private static function vectorBody(): string
+    {
+        $vector = json_decode((string)file_get_contents(__DIR__ . '/../../vectors/signature.json'), true);
+        self::assertStringEndsWith('}', $vector['body']);
+        return $vector['body'];
     }
 
     public function testNieocenioneCarriesNoVerdict(): void

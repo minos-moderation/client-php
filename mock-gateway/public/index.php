@@ -8,10 +8,11 @@ declare(strict_types=1);
  *   php -S 127.0.0.1:8100 -t mock-gateway/public
  *
  * `POST /api/v1/b2b/oceny` (a batch) and `POST /api/v1/b2b/ocena` (one comment,
- * synchronously) answer like the real ones, also without `/v1` (`/api/b2b/…`), which the
- * real gateway rewrites them to; everything else is `404 nie_znaleziono`. A batch's
+ * synchronously) answer like the real ones, also without `/v1` (`/api/b2b/…`), the alias
+ * the gateway documents for its routes; everything else is `404 nie_znaleziono`. A batch's
  * verdicts are delivered by `bin/worker.php`, not here — as in the real gateway, the
- * request only queues. The synchronous route answers the verdict itself and queues nothing.
+ * request only queues. The synchronous route, once opened (`MINOS_MOCK_SYNC=1`), answers
+ * the verdict itself and queues nothing.
  */
 
 require __DIR__ . '/../autoload.php';

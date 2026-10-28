@@ -68,6 +68,17 @@ final class ContractDocumentTest extends TestCase
         self::assertSame(WebhookPayload::CATEGORIES, $labels[1]);
     }
 
+    public function testTheDocumentedPersonalDataValuesAreTheLibrarys(): void
+    {
+        foreach (['rodzaj' => WebhookPayload::PERSONAL_DATA_KINDS, 'reakcja' => WebhookPayload::PERSONAL_DATA_REACTIONS]
+            as $field => $constant) {
+            self::assertSame(1, preg_match('/^\| `' . $field . '` \| (.+) \|$/m', $this->document, $m),
+                "the {$field} row must be found in docs/contract.md");
+            preg_match_all('/`([a-z_]+)`/', $m[1], $values);
+            self::assertSame($constant, $values[1], $field);
+        }
+    }
+
     /**
      * The code or text between `<!-- <name>:start -->` and `<!-- <name>:end -->`, without
      * its fence.

@@ -7,11 +7,13 @@ namespace Minos\Mock;
 /**
  * The mock's queue: one JSON file, read and written under an exclusive lock.
  *
- * The real gateway keeps each item encrypted, in a store that expires it with its TTL. The mock is a local development tool and keeps plain JSON on the
- * developer's disk instead — which is exactly why real comments must never be sent to it.
+ * The real gateway keeps each item encrypted, in a store that expires it with its TTL. The
+ * mock is a local development tool and keeps plain JSON on the developer's disk instead —
+ * which is exactly why real comments must never be sent to it.
  *
- * An entry: `{entry, item_id, text, profile, meta, received_at, next_at, attempts,
- * deliveries}` — times in unix seconds.
+ * An entry: `{entry, item_id, text, profile, meta, context, received_at, next_at, attempts,
+ * deliveries}` — times in unix seconds; `context` is the comment's checked conversation
+ * context, or null.
  */
 final class Queue
 {
@@ -52,7 +54,7 @@ final class Queue
      * Appends items.
      *
      * @param array<int,array<string,mixed>> $items Items with `item_id`, `text`, `profile`,
-     *     `meta`, `received_at` and `next_at`.
+     *     `meta`, `context`, `received_at` and `next_at`.
      * @return void
      */
     public function append(array $items): void
@@ -96,8 +98,9 @@ final class Queue
     public function remove(string $entry): void
     {
         $this->mutate(static function (array $entries) use ($entry): array {
-            return array_values(array_filter($entries, static function (array $e) use ($entry): bool {
-                return $e['entry'] !== $entry;
+            // A broken entry (not an object, or without an id) goes with any removal.
+            return array_values(array_filter($entries, static function ($e) use ($entry): bool {
+                return is_array($e) && is_string($e['entry'] ?? null) && $e['entry'] !== $entry;
             }));
         });
     }

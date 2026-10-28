@@ -58,9 +58,11 @@ final class EndToEndTest extends MockTestCase
             ['id' => 'k-1', 'tekst' => 'Świetny wpis!'],
             ['id' => 'k-2', 'tekst' => 'spadaj [minos:blokuj] [minos:kategoria=nekanie]'],
             ['id' => 'k-3', 'tekst' => self::CENSORED],
+            ['id' => 'k-4', 'tekst' => 'dzwoń [minos:dane-osobowe=telefon] [minos:kategoria]',
+                'kontekst' => [['rola' => 'inny', 'tekst' => 'podaj numer']]],
         ]]);
         self::assertSame(202, $status);
-        self::assertSame(['przyjete' => ['k-1', 'k-2', 'k-3']], $answer);
+        self::assertSame(['przyjete' => ['k-1', 'k-2', 'k-3', 'k-4']], $answer);
 
         exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../../mock-gateway/bin/worker.php') . ' --once 2>&1',
             $output, $exit);
@@ -69,9 +71,10 @@ final class EndToEndTest extends MockTestCase
         $deliveries = array_map(static function (string $line): array {
             return json_decode($line, true);
         }, file($received, FILE_IGNORE_NEW_LINES) ?: []);
-        self::assertCount(3, $deliveries);
+        self::assertCount(4, $deliveries);
         $verdicts = [];
         $masked = [];
+        $personalData = [];
         foreach ($deliveries as $delivery) {
             self::assertSame('application/json; charset=utf-8', $delivery['typ']);
             self::assertTrue(Signature::verify(Config::DEFAULT_SECRET, (string)$delivery['podpis'],
@@ -79,16 +82,21 @@ final class EndToEndTest extends MockTestCase
             $read = WebhookPayload::parse($delivery['body']);
             $verdicts[$read['id']] = $read['kwalifikacja'];
             $masked[$read['id']] = $read['ocenzurowany'];
+            $personalData[$read['id']] = $read['dane_osobowe'];
         }
         ksort($verdicts);
-        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane', 'k-3' => 'ocenzurowane'], $verdicts);
+        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane', 'k-3' => 'ocenzurowane', 'k-4' => 'bezpieczne'],
+            $verdicts);
+        self::assertSame(['rodzaj' => 'telefon', 'reakcja' => 'ukryj'], $personalData['k-4'], 'the context reached the verdict');
+        self::assertSame([], $personalData['k-1']);
         self::assertSame(mb_strlen(trim(self::CENSORED)), mb_strlen((string)$masked['k-3']),
             'the masked text is as long as the trimmed text that was sent');
     }
 
     public function testOneCommentPostedOverHttpGetsItsVerdictInTheResponse(): void
     {
-        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null,
+            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_SYNC' => '1']);
         $headers = ['X-Gateway-Key: ' . Config::DEFAULT_KEY, 'Content-Type: application/json'];
 
         foreach (['/api/v1/b2b/ocena', '/api/b2b/ocena'] as $path) {
@@ -109,6 +117,11 @@ final class EndToEndTest extends MockTestCase
             ['tekst' => 'x [minos:nieocenione]']);
         self::assertSame([200, ['status' => 'nieocenione']], [$status, $answer]);
 
+        // A category marker without a label is a valid comment, not a server error.
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", $headers,
+            ['tekst' => 'x [minos:kategoria]']);
+        self::assertSame([200, 'bezpieczne', []], [$status, $answer['kwalifikacja'] ?? null, $answer['kategorie'] ?? null]);
+
         [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
             array_merge($headers, ['X-Minos-Mock-Error: silnik_przeciazony']), ['tekst' => 'x']);
         self::assertSame([503, 'silnik_przeciazony'], [$status, $answer['blad']['kod']]);
@@ -117,10 +130,20 @@ final class EndToEndTest extends MockTestCase
         self::assertSame([], glob($this->dir . '/*') ?: []);
     }
 
+    public function testTheSynchronousRouteIsClosedByDefaultOverHttp(): void
+    {
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
+            ['X-Gateway-Key: ' . Config::DEFAULT_KEY], ['tekst' => 'x']);
+        self::assertSame([404, 'nie_znaleziono'], [$status, $answer['blad']['kod']]);
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", [], ['tekst' => 'x']);
+        self::assertSame([401, 'brak_klucza'], [$status, $answer['blad']['kod']]);
+    }
+
     public function testAFreeKeyIsRefusedOnTheSynchronousRouteOverHttp(): void
     {
         $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null,
-            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => 'b2b_free']);
+            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => 'b2b_free', 'MINOS_MOCK_SYNC' => '1']);
         [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
             ['X-Gateway-Key: ' . Config::DEFAULT_KEY], ['tekst' => 'x']);
         self::assertSame([403, 'tylko_klucze_platne'], [$status, $answer['blad']['kod']]);

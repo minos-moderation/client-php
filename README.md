@@ -57,8 +57,8 @@ The real batch route has been open in production since 2026-10-25 and the synchr
 is still closed (see the contract's status); never test against them. The mock answers as
 [the contract's copy](docs/contract.md) describes the two routes, with the checks and error
 codes it lists, and verdicts delivered to your webhook, signed the same way, or answered at
-once on the synchronous route. What the gateway has added since the copy's date, listed in
-its status, is not in the mock yet. It needs no `composer install`.
+once on the synchronous route. Like the gateway in production, it keeps the synchronous
+route closed until you open it (`MINOS_MOCK_SYNC=1`). It needs no `composer install`.
 
 ```bash
 # 1. The API (terminal 1)
@@ -69,19 +69,25 @@ php -S 127.0.0.1:8100 -t mock-gateway/public
 export MINOS_MOCK_WEBHOOK_URL=http://localhost:8080/wergiliusz/webhook
 php mock-gateway/bin/worker.php
 
-# 3. A batch (terminal 3)
+# 3. A batch (terminal 3); the second item comes with its conversation context
 curl -s http://127.0.0.1:8100/api/v1/b2b/oceny \
   -H 'X-Gateway-Key: wgb2b_atrapa_minos_0000000000000000' \
   -H 'Content-Type: application/json' \
   -d '{"elementy":[{"id":"k-1","tekst":"Świetny wpis!"},
-                   {"id":"k-2","tekst":"spadaj [minos:blokuj] [minos:kategoria=nekanie]"}]}'
+                   {"id":"k-2","tekst":"dzwoń [minos:dane-osobowe=telefon]",
+                    "kontekst":[{"rola":"inny","tekst":"Podaj numer."}]}]}'
 
-# 4. One comment, synchronously: the verdict is the answer, nothing is queued or delivered
+# 4. One comment, synchronously (start the API with MINOS_MOCK_SYNC=1 to open the route):
+#    the verdict is the answer, nothing is queued or delivered
 curl -s http://127.0.0.1:8100/api/v1/b2b/ocena \
   -H 'X-Gateway-Key: wgb2b_atrapa_minos_0000000000000000' \
   -H 'Content-Type: application/json' \
   -d '{"tekst":"spadaj [minos:blokuj] [minos:kategoria=nekanie]"}'
 ```
+
+The paths also answer without `/v1` (`/api/b2b/oceny`, `/api/b2b/ocena`), an alias the
+gateway documents for its routes; use `/api/v1/…`. Any other path answers
+`404 nie_znaleziono`.
 
 The mock never assesses content. **You choose the verdict** with markers in the comment:
 
@@ -90,7 +96,9 @@ The mock never assesses content. **You choose the verdict** with markers in the 
 | (none) | `bezpieczne` |
 | `[minos:blokuj]` | `zablokowane` |
 | `[minos:cenzuruj]` | `ocenzurowane`. In `ocenzurowany`, every `[[fragment]]` becomes `[[█…]]`, `█` per character: the brackets and markers stay, so the masked text is exactly as long as the (trimmed) text you sent, as with the gateway. No `[[…]]`, or nested or unbalanced brackets: no `ocenzurowany`. |
-| `[minos:kategoria=<label>]` | adds a category. `samookaleczenie` also sets `wsparcie`. |
+| `[minos:kategoria=<label>]` | adds a category. A label outside the contract's list, or none, is ignored. `samookaleczenie` also sets `wsparcie`. |
+| `[minos:wsparcie]` | `wsparcie` without a category, as the gateway sends it for a crisis it cannot name |
+| `[minos:dane-osobowe=<rodzaj>]` or `[minos:dane-osobowe=<rodzaj>:<reakcja>]` | the `dane_osobowe` section (`reakcja` is `ukryj` unless you name another), with a kind and a reaction from the contract's lists. As with the gateway, only for a comment sent with a `kontekst`, and never with `zablokowane` or `nieocenione`. |
 | `[minos:nieocenione]` | `status: nieocenione` (exactly `{"status":"nieocenione"}` on the synchronous route) |
 | `[minos:bez-wersji]` | `wersja: null` |
 | `[minos:dwa-razy]` | delivered twice (at-least-once delivery) |
@@ -98,19 +106,31 @@ The mock never assesses content. **You choose the verdict** with markers in the 
 | `[minos:stary-podpis]` | signed ten minutes ago |
 | `[minos:cisza]` | never delivered; the entry disappears with its TTL |
 
-The four delivery markers (`dwa-razy`, `zly-podpis`, `stary-podpis`, `cisza`) mean nothing
-on the synchronous route, which delivers nothing.
+`nieocenione` wins over `blokuj`, and `blokuj` over `cenzuruj`. The four delivery markers
+(`dwa-razy`, `zly-podpis`, `stary-podpis`, `cisza`) mean nothing on the synchronous route,
+which delivers nothing.
 
 To test error handling, send the mock-only header `X-Minos-Mock-Error: <kod>` with a code
 from that route's error table in the contract: for example `kolejka_pelna` or
 `limit_minutowy_klucza` on the batch route, `silnik_przeciazony` or `tylko_klucze_platne`
 on the synchronous one. A code the route never sends (`kolejka_pelna` on the synchronous
-route, say) answers `400 atrapa_nieznany_kod`. On the synchronous route a missing or
-unknown key is refused first (`401 brak_klucza`), as in the gateway. The gateway then
-checks the route's own switch: closed, it answers `404 nie_znaleziono` to any recognised
-key, whatever its class. The mock serves the route and has no switch: it checks the key's
-class next (`403 tylko_klucze_platne`), so a forced `nie_znaleziono` reaches a paid key
-only.
+route, say) answers `400 atrapa_nieznany_kod`. The header is read after the key, so a
+missing or unknown key still gets `401 brak_klucza`; on the synchronous route it is read
+after the route's switch and the key's class, as the gateway checks them first: a closed
+route answers `404 nie_znaleziono` and a free key `403 tylko_klucze_platne`, whatever the
+header asks for.
+
+On the batch route, a refusal before the webhook's check comes from the key
+(`401 brak_klucza`), the body's size (`413 za_duze_zadanie`) or a body that is not a JSON
+object (`400 bledne_wejscie`); then `403 brak_webhooka` when no webhook is set; then the
+batch, item by item; then each item's profile; then each item's `kontekst`; then the
+queue's room.
+
+A comment's profile must be on the key's list (`MINOS_MOCK_PROFILES`) **and** on the B2B
+list of the contract, as with the gateway: a profile off the B2B list is refused even when
+the key lists it, also as the key's first profile. A queued comment whose profile the key no
+longer allows when the worker reaches it (you changed `MINOS_MOCK_PROFILES` meanwhile) is
+delivered as `nieocenione`.
 
 Settings (environment):
 
@@ -120,20 +140,32 @@ Settings (environment):
 | `MINOS_MOCK_WEBHOOK_SECRET` | `atrapa-minos-sekret-webhooka-tylko-lokalnie` |
 | `MINOS_MOCK_KEY` | `wgb2b_atrapa_minos_0000000000000000` |
 | `MINOS_MOCK_KEY_CLASS` | `b2b_paid`. With `b2b_free` (or any other value) the synchronous route answers `403 tylko_klucze_platne`; batches are accepted either way. |
+| `MINOS_MOCK_SYNC` | `0`: the synchronous route is closed, as in production, and answers `404 nie_znaleziono` to the key. `1` opens it. |
 | `MINOS_MOCK_PROFILES` | `forum_adult,forum_teen` (the first is the default) |
-| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `500`. The first two are the gateway's defaults; `500` is the mock's own, while the gateway's queue holds 350 today (see the contract's status), synced in 0.2.0 |
+| `MINOS_MOCK_MAX_ITEMS` / `MINOS_MOCK_MAX_CHARS` / `MINOS_MOCK_QUEUE_MAX` | `20` / `3000` / `350`, the gateway's |
 | `MINOS_MOCK_TTL_S` | `900` |
 | `MINOS_MOCK_DELAY_S` | `2`: seconds before the first delivery attempt |
 | `MINOS_MOCK_BACKOFF_S` | `5`: first retry pause, which doubles up to 120 s |
-| `MINOS_MOCK_WEBHOOK_TIMEOUT_S` | `5` |
+| `MINOS_MOCK_WEBHOOK_TIMEOUT_S` | `10`, the gateway's |
 | `MINOS_MOCK_DATA_DIR` | `<temp>/minos-mock`: the queue file |
 
 **Where the mock differs from the gateway:**
-- It keeps its queue as plain JSON on your disk, so **never send real users' comments to
-  it**.
+- It keeps its queue, conversation contexts included, as plain JSON on your disk, so
+  **never send real users' comments to it**. It keeps `meta` as sent; the gateway keeps
+  only the five known fields.
 - It delivers to any URL, `http://localhost` included. The gateway delivers only over
   `https`, to hosts on the key's list that resolve to public addresses.
-- It does not simulate the key's rate limits; use `X-Minos-Mock-Error` instead.
-- It answers the synchronous route at once, from the markers, and serves it already; the
-  gateway waits for its engine there, and does not serve the route yet (see the
-  contract's status).
+- It has one key and one webhook, both from the settings. Another surface's key, and so
+  `403 nie_ta_powierzchnia`, exists only through `X-Minos-Mock-Error`.
+- It does not simulate the key's rate limits, the shared ceiling or the queue's readiness;
+  use `X-Minos-Mock-Error` instead. The `ponow_za_s` of a forced refusal is the mock's
+  number.
+- It does not pace its verdicts (about 30 a minute in the gateway): each comment is
+  delivered `MINOS_MOCK_DELAY_S` after it was accepted. It retries a failed delivery up to
+  the entry's TTL itself; the gateway stops a margin before it.
+- It answers the synchronous route at once, from the markers; the gateway waits for its
+  engine there, up to 20 seconds, or 30 with the context question (see the contract).
+- It never assesses content: no personal data is replaced, and the `dane_osobowe` section
+  comes only from its marker.
+- Where the contract places no check (the body's size and the JSON against the webhook,
+  `kontekst` in a batch), the order above is the mock's.

@@ -17,7 +17,11 @@ namespace Minos\Client;
  *   fail-open or fail-closed setting, never a guess;
  * - a category label outside {@see CATEGORIES} is kept: the list may grow, and dropping a
  *   label would hide it from the forum's moderators;
- * - `ocenzurowany` is read only together with `ocenzurowane`.
+ * - `ocenzurowany` is read only together with `ocenzurowane`;
+ * - the `dane_osobowe` section (a comment sent with a conversation context that carries a
+ *   personal datum) is read as `{rodzaj, reakcja}`: a `reakcja` other than the three known
+ *   ones reads as `nieocenione` (the question got no usable answer), and a kind outside
+ *   {@see PERSONAL_DATA_KINDS} is kept, like a category. Without the section, `[]`.
  *
  * Call it only on a body whose signature {@see Signature::verify} accepted. No PHP 8
  * syntax: it runs inside plugins on customers' hosts.
@@ -40,6 +44,15 @@ final class WebhookPayload
         'wulgaryzmy', 'uzywki', 'uwodzenie_nieletnich', 'hazard', 'niebezpieczne_zachowanie',
     ];
 
+    /** The kinds of personal datum the `dane_osobowe` section names today (`docs/contract.md`). */
+    public const PERSONAL_DATA_KINDS = ['adres', 'telefon', 'pesel', 'karta_platnicza', 'rachunek'];
+
+    /**
+     * The reactions of the `dane_osobowe` section: hide the datum, leave it, or no answer to
+     * the question (`nieocenione`, the same word as the payload's status).
+     */
+    public const PERSONAL_DATA_REACTIONS = ['ukryj', 'pozostaw', 'nieocenione'];
+
     /** The item id the plugin sent: what it matches the verdict with. */
     private const ITEM_ID = '/^[A-Za-z0-9._:-]{1,64}\z/';
 
@@ -50,7 +63,7 @@ final class WebhookPayload
      * Reads a delivery body.
      *
      * @param string $body The exact body of a delivery whose signature was verified.
-     * @return array{id:string,status:string,kwalifikacja:?string,kategorie:array<int,string>,ocenzurowany:?string,wsparcie:bool,wersja:?string}|null
+     * @return array{id:string,status:string,kwalifikacja:?string,kategorie:array<int,string>,ocenzurowany:?string,wsparcie:bool,wersja:?string,dane_osobowe:array{}|array{rodzaj:?string,reakcja:string}}|null
      *     The normalised payload, or null when the body is not a payload at all (not a JSON
      *     object, or no valid `id`) — nothing in it can be matched to a comment.
      */
@@ -88,6 +101,29 @@ final class WebhookPayload
             'ocenzurowany' => $qualification === 'ocenzurowane' && is_string($masked) ? $masked : null,
             'wsparcie'     => ($data['wsparcie'] ?? null) === true,
             'wersja'       => is_string($version) && preg_match(self::VERSION, $version) ? $version : null,
+            'dane_osobowe' => self::personalData($data['dane_osobowe'] ?? null),
+        ];
+    }
+
+    /**
+     * The `dane_osobowe` section, read so that nothing unknown passes for an answer.
+     *
+     * @param mixed $section The decoded section, or null when the payload has none.
+     * @return array{}|array{rodzaj:?string,reakcja:string} `[]` without a section; else the
+     *     kind (null when it is not a non-empty string) and the reaction (`nieocenione` when
+     *     it is not one of {@see PERSONAL_DATA_REACTIONS}). A section that is there but is
+     *     not an object reads as a kind unknown and no answer, never as no section.
+     */
+    private static function personalData($section): array
+    {
+        if ($section === null) {
+            return [];
+        }
+        $kind = is_array($section) ? ($section['rodzaj'] ?? null) : null;
+        $reaction = is_array($section) ? ($section['reakcja'] ?? null) : null;
+        return [
+            'rodzaj'  => is_string($kind) && $kind !== '' ? $kind : null,
+            'reakcja' => in_array($reaction, self::PERSONAL_DATA_REACTIONS, true) ? $reaction : self::UNASSESSED,
         ];
     }
 
@@ -95,7 +131,7 @@ final class WebhookPayload
      * The normalised payload of an item without a verdict.
      *
      * @param string $id The item id.
-     * @return array{id:string,status:string,kwalifikacja:null,kategorie:array<int,string>,ocenzurowany:null,wsparcie:bool,wersja:null}
+     * @return array{id:string,status:string,kwalifikacja:null,kategorie:array<int,string>,ocenzurowany:null,wsparcie:bool,wersja:null,dane_osobowe:array{}}
      */
     private static function unassessed(string $id): array
     {
@@ -107,6 +143,7 @@ final class WebhookPayload
             'ocenzurowany' => null,
             'wsparcie'     => false,
             'wersja'       => null,
+            'dane_osobowe' => [],
         ];
     }
 }

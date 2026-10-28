@@ -84,6 +84,10 @@ final class SyncRouteTest extends MockTestCase
 
     public function refusedRequests(): array
     {
+        $entry = ['rola' => 'inny', 'tekst' => 'wcześniej'];
+        $with = static function ($context): string {
+            return (string)json_encode(['tekst' => 'x', 'kontekst' => $context]);
+        };
         return [
             'not JSON'                => ['{"tekst":', 400, 'bledne_wejscie'],
             'a JSON list'             => ['[{"tekst":"x"}]', 400, 'bledne_wejscie'],
@@ -99,7 +103,14 @@ final class SyncRouteTest extends MockTestCase
             'text too long'           => [(string)json_encode(['tekst' => str_repeat('ż', 3001)]), 413, 'limit_dlugosci'],
             'profile off the key'     => ['{"tekst":"x","profil":"child_strict"}', 403, 'profil_niedozwolony'],
             'profile is not a string' => ['{"tekst":"x","profil":1}', 403, 'profil_niedozwolony'],
-            'body over the ceiling'   => [(string)json_encode(['tekst' => 'x', 'meta' => str_repeat('a', 60000)]), 413, 'za_duze_zadanie'],
+            'context is a string'     => [$with('x'), 400, 'bledny_kontekst'],
+            'context is an object'    => [$with((object)$entry), 400, 'bledny_kontekst'],
+            'an entry is not an object' => [$with([7]), 400, 'bledny_kontekst'],
+            'an unknown role'         => [$with([['rola' => 'Autor', 'tekst' => 'x']]), 400, 'bledny_kontekst'],
+            'a blank entry'           => [$with([['rola' => 'autor', 'tekst' => '']]), 400, 'bledny_kontekst'],
+            'nine entries'            => [$with(array_fill(0, 9, $entry)), 413, 'za_duzy_kontekst'],
+            'an entry too long'       => [$with([['rola' => 'autor', 'tekst' => str_repeat('ż', 501)]]), 413, 'za_duzy_kontekst'],
+            'body over the ceiling'   => [(string)json_encode(['tekst' => 'x', 'meta' => str_repeat('a', 110000)]), 413, 'za_duze_zadanie'],
         ];
     }
 
@@ -113,26 +124,70 @@ final class SyncRouteTest extends MockTestCase
     {
         $body = (string)json_encode(['tekst' => self::fullEscapedText()]);
         self::assertSame(36012, strlen($body), 'every character must be a 12-byte escaped pair');
+        $withContext = (string)json_encode(['tekst' => self::fullEscapedText(), 'kontekst' => self::fullEscapedContext()]);
+        self::assertGreaterThan(36000 + 8 * 6000, strlen($withContext));
 
         $cfg = $this->config();
         self::assertSame(200, (new Intake($cfg))->handleSync($cfg->key, null, $body)['status']);
+        self::assertSame(200, (new Intake($cfg))->handleSync($cfg->key, null, $withContext)['status']);
     }
 
     /**
-     * The gateway's ceiling, 3000 × 12 + 1024 bytes for the comment and 16,384 for the rest:
-     * a body of 53,408 bytes is read, one byte more is refused before it is parsed.
+     * The gateway's ceiling, 3000 × 12 + 1024 + 8 × (500 × 12 + 64) bytes for the comment and
+     * its context and 16,384 for the rest: a body of 101,920 bytes is read, one byte more is
+     * refused before it is parsed. The number is the one the contract's copy names.
      */
     public function testTheBodyCeilingIsTheGateways(): void
     {
         $cfg = $this->config();
-        $json = (string)json_encode(['tekst' => self::fullEscapedText(), 'meta' => ['padding' => '']]);
+        $ceiling = self::documentedCeiling('`POST /api/v1/b2b/ocena`');
+        self::assertSame(101920, $ceiling);
+        $json = (string)json_encode(['tekst' => self::fullEscapedText(), 'kontekst' => self::fullEscapedContext(),
+            'meta' => ['padding' => '']]);
 
-        $atCeiling = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, 53408));
+        $atCeiling = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, $ceiling));
         self::assertSame(200, $atCeiling['status']);
 
-        $over = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, 53409));
+        $over = (new Intake($cfg))->handleSync($cfg->key, null, self::sized($json, $ceiling + 1));
         self::assertSame([413, 'za_duze_zadanie'], [$over['status'], $over['body']['blad']['kod']]);
         self::assertQueueUntouched($cfg);
+    }
+
+    /**
+     * Closed, as the gateway keeps it in production and as the mock starts, the route is
+     * absent: any known key gets `404 nie_znaleziono`, whatever its class, the body or a
+     * forced code; only a missing or unknown key is refused first, with 401.
+     */
+    public function testTheClosedRouteAnswers404ToTheKeyAfterThe401(): void
+    {
+        self::assertFalse(Config::fromEnv([])->syncOpen, 'the route is closed by default');
+        foreach (['b2b_paid', 'b2b_free'] as $class) {
+            $cfg = Config::fromEnv(['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => $class]);
+            foreach ([[null, '{"tekst":"x"}'], [null, '{"tekst":'], ['silnik_przeciazony', '{"tekst":"x"}'],
+                [null, (string)json_encode(['tekst' => 'x', 'meta' => str_repeat('a', 110000)])]] as [$force, $body]) {
+                $answer = (new Intake($cfg))->handleSync($cfg->key, $force, $body);
+                self::assertSame([404, 'nie_znaleziono'], [$answer['status'], $answer['body']['blad']['kod']], $class);
+            }
+            foreach ([null, '', 'wgb2b_inny'] as $key) {
+                $answer = (new Intake($cfg))->handleSync($key, null, '{"tekst":"x"}');
+                self::assertSame([401, 'brak_klucza'], [$answer['status'], $answer['body']['blad']['kod']]);
+            }
+            self::assertQueueUntouched($cfg);
+        }
+    }
+
+    public function testAContextWithADatumMarkerGetsTheSectionAndNoContextNone(): void
+    {
+        $cfg = $this->config();
+        $text = 'dzwoń [minos:dane-osobowe=telefon]';
+        $with = $this->post($cfg, ['tekst' => $text, 'kontekst' => [['rola' => 'inny', 'tekst' => 'podaj numer']]]);
+        self::assertSame(['rodzaj' => 'telefon', 'reakcja' => 'ukryj'], $with['body']['dane_osobowe']);
+
+        foreach ([['tekst' => $text], ['tekst' => $text, 'kontekst' => []], ['tekst' => $text, 'kontekst' => null]] as $body) {
+            $without = $this->post($cfg, $body);
+            self::assertSame(200, $without['status']);
+            self::assertArrayNotHasKey('dane_osobowe', $without['body']);
+        }
     }
 
     public function testNoKeyOrAnotherKeyIs401(): void
@@ -163,22 +218,25 @@ final class SyncRouteTest extends MockTestCase
 
     /**
      * Each request fails every check from its step on, so only the contract's order picks
-     * the code: key and class → body size → JSON → text → profile.
+     * the code: key → the route's switch → class → body size → JSON → text → profile →
+     * context.
      */
     public function testTheChecksRunInTheContractsOrder(): void
     {
-        $tooBig = '{"tekst":"' . str_repeat('a', 60000);
+        $tooBig = '{"tekst":"' . str_repeat('a', 110000);
         $steps = [
-            ['wgb2b_inny', 'b2b_free', $tooBig, 'brak_klucza'],
-            [null, 'b2b_free', $tooBig, 'tylko_klucze_platne'],
-            [null, 'b2b_paid', $tooBig, 'za_duze_zadanie'],
-            [null, 'b2b_paid', '{"tekst":', 'bledne_wejscie'],
-            [null, 'b2b_paid', (string)json_encode(['tekst' => str_repeat('ż', 3001), 'profil' => 'x']), 'limit_dlugosci'],
-            [null, 'b2b_paid', '{"tekst":" ","profil":"x"}', 'brak_tekstu'],
-            [null, 'b2b_paid', '{"tekst":"x","profil":"x"}', 'profil_niedozwolony'],
+            ['wgb2b_inny', '0', 'b2b_free', $tooBig, 'brak_klucza'],
+            [null, '0', 'b2b_free', $tooBig, 'nie_znaleziono'],
+            [null, '1', 'b2b_free', $tooBig, 'tylko_klucze_platne'],
+            [null, '1', 'b2b_paid', $tooBig, 'za_duze_zadanie'],
+            [null, '1', 'b2b_paid', '{"tekst":', 'bledne_wejscie'],
+            [null, '1', 'b2b_paid', (string)json_encode(['tekst' => str_repeat('ż', 3001), 'profil' => 'x', 'kontekst' => 'x']), 'limit_dlugosci'],
+            [null, '1', 'b2b_paid', '{"tekst":" ","profil":"x","kontekst":"x"}', 'brak_tekstu'],
+            [null, '1', 'b2b_paid', '{"tekst":"x","profil":"x","kontekst":"x"}', 'profil_niedozwolony'],
+            [null, '1', 'b2b_paid', '{"tekst":"x","profil":"forum_teen","kontekst":"x"}', 'bledny_kontekst'],
         ];
-        foreach ($steps as [$key, $class, $body, $code]) {
-            $cfg = $this->config(['MINOS_MOCK_KEY_CLASS' => $class]);
+        foreach ($steps as [$key, $open, $class, $body, $code]) {
+            $cfg = $this->config(['MINOS_MOCK_KEY_CLASS' => $class, 'MINOS_MOCK_SYNC' => $open]);
             $answer = (new Intake($cfg))->handleSync($key ?? $cfg->key, null, $body);
             self::assertSame($code, $answer['body']['blad']['kod']);
         }
@@ -225,7 +283,7 @@ final class SyncRouteTest extends MockTestCase
                 $documented[$code] = (int)$row[1];
             }
         }
-        self::assertGreaterThanOrEqual(10, count($documented), 'the error table must be found');
+        self::assertGreaterThanOrEqual(14, count($documented), 'the error table must be found');
 
         $cfg = $this->config();
         $mock = [];

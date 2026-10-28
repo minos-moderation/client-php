@@ -7,10 +7,10 @@ namespace Minos\Mock;
 /**
  * Settings of the mock gateway, read from `MINOS_MOCK_*` environment variables.
  *
- * The defaults are the real gateway's (20 items, 3000 characters, a 900 s TTL, a queue of
- * 500), so a plugin that works against the mock meets the same limits in production. The
- * mock has ONE key and ONE webhook, both set here — the real gateway keeps them in its key
- * store, one record per client, with its class.
+ * The defaults are the gateway's (20 items, 3000 characters, a 900 s TTL, a queue of 350, a
+ * 10 s delivery, the synchronous route closed), so a plugin that works against the mock
+ * meets the same limits in production. The mock has ONE key and ONE webhook, both set here —
+ * the real gateway keeps them in its key store, one record per client, with its class.
  */
 final class Config
 {
@@ -23,7 +23,10 @@ final class Config
      */
     public $keyClass;
 
-    /** @var array<int,string> Profiles the key may ask for; the first is the default. */
+    /**
+     * @var array<int,string> Profiles the key's record lists; the first is the default. Only
+     *     those on {@see B2B_PROFILES} can be used ({@see allowsProfile}).
+     */
     public $profiles;
 
     /** @var string|null Where verdicts go; null makes every batch `403 brak_webhooka`. */
@@ -56,6 +59,12 @@ final class Config
     /** @var string Directory of the queue file. */
     public $dataDir;
 
+    /**
+     * @var bool Whether the synchronous route is open. Closed (the default, as the gateway
+     *     keeps it in production), it answers `404 nie_znaleziono` to the key.
+     */
+    public $syncOpen;
+
     /** The longest pause between two delivery attempts (the real gateway's 2 min). */
     public const MAX_BACKOFF_S = 120;
 
@@ -67,6 +76,18 @@ final class Config
 
     /** The default webhook secret — for local work only, like everything here. */
     public const DEFAULT_SECRET = 'atrapa-minos-sekret-webhooka-tylko-lokalnie';
+
+    /**
+     * The profiles a B2B key may use at all (`docs/contract.md` → The key): any other is
+     * refused with `403 profil_niedozwolony`, even when the key's record lists it.
+     */
+    public const B2B_PROFILES = ['forum_adult', 'forum_teen', 'blog_comments', 'ig_comments', 'api_generic'];
+
+    /** Entries a comment's conversation context (`kontekst`) may have. */
+    public const MAX_CONTEXT_ENTRIES = 8;
+
+    /** Characters one context entry may have. */
+    public const MAX_CONTEXT_CHARS = 500;
 
     /**
      * Reads the configuration.
@@ -96,13 +117,14 @@ final class Config
         $cfg->webhookSecret = $get('MINOS_MOCK_WEBHOOK_SECRET', self::DEFAULT_SECRET);
         $cfg->maxItems = $int('MINOS_MOCK_MAX_ITEMS', 20);
         $cfg->maxChars = $int('MINOS_MOCK_MAX_CHARS', 3000);
-        $cfg->queueMax = $int('MINOS_MOCK_QUEUE_MAX', 500);
+        $cfg->queueMax = $int('MINOS_MOCK_QUEUE_MAX', 350);
         $cfg->ttlS = $int('MINOS_MOCK_TTL_S', 900);
         $cfg->delayS = $int('MINOS_MOCK_DELAY_S', 2);
         $cfg->backoffS = max(1, $int('MINOS_MOCK_BACKOFF_S', 5));
-        $cfg->webhookTimeoutS = max(1, $int('MINOS_MOCK_WEBHOOK_TIMEOUT_S', 5));
+        $cfg->webhookTimeoutS = max(1, $int('MINOS_MOCK_WEBHOOK_TIMEOUT_S', 10));
         $cfg->dataDir = $get('MINOS_MOCK_DATA_DIR',
             rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'minos-mock');
+        $cfg->syncOpen = $get('MINOS_MOCK_SYNC', '0') === '1';
         return $cfg;
     }
 
@@ -115,6 +137,19 @@ final class Config
     public function isPaidKey(): bool
     {
         return $this->keyClass === self::KEY_CLASS_PAID;
+    }
+
+    /**
+     * Whether a comment may be assessed under a profile: one on the B2B list AND on the key's
+     * own list, as the gateway checks it on every request and again before it assesses a
+     * queued comment.
+     *
+     * @param string $profile The profile.
+     * @return bool True when both lists name it.
+     */
+    public function allowsProfile(string $profile): bool
+    {
+        return in_array($profile, self::B2B_PROFILES, true) && in_array($profile, $this->profiles, true);
     }
 
     /**

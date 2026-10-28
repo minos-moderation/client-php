@@ -16,7 +16,10 @@ use Minos\Client\Signature;
  * - a failed delivery is retried with a doubling pause (from `MINOS_MOCK_BACKOFF_S`, at
  *   most two minutes) until the entry's TTL — then the entry and its verdict are gone;
  * - every attempt is signed anew, with its own timestamp;
- * - an entry nobody delivers disappears with its TTL, with no webhook at all.
+ * - an entry nobody delivers disappears with its TTL, with no webhook at all;
+ * - a comment whose profile the key no longer allows (`MINOS_MOCK_PROFILES` changed after
+ *   it was accepted) gets `nieocenione`;
+ * - one entry that fails never stops the others: it is reported {@see FAILED} and dropped.
  *
  * What it does NOT keep: the real worker delivers only over `https` to public addresses on
  * the key's host list. The mock posts to whatever `MINOS_MOCK_WEBHOOK_URL` names —
@@ -35,6 +38,9 @@ final class Worker
 
     /** Outcome: the entry reached its TTL undelivered (`[minos:cisza]`, or a stopped worker). */
     public const EXPIRED = 'wygasl';
+
+    /** Outcome: the entry could not be processed at all (a broken entry); it was dropped. */
+    public const FAILED = 'blad';
 
     /** @var Config */
     private $cfg;
@@ -68,19 +74,41 @@ final class Worker
     {
         $report = [];
         foreach ($this->queue->all() as $entry) {
-            $expiresAt = (int)$entry['received_at'] + $this->cfg->ttlS;
-            if ($now >= $expiresAt) {
-                $this->queue->remove($entry['entry']);
-                $report[] = ['id' => $entry['item_id'], 'wynik' => self::EXPIRED, 'status' => 0];
-                continue;
+            try {
+                $line = $this->process($entry, $now);
+            } catch (\Throwable $e) {
+                // A broken entry must not hold back the ones behind it until their TTL.
+                $this->queue->remove((string)($entry['entry'] ?? ''));
+                $line = ['id' => is_string($entry['item_id'] ?? null) ? $entry['item_id'] : '?',
+                    'wynik' => self::FAILED, 'status' => 0];
             }
-            $flags = Verdicts::deliveryFlags($entry['text']);
-            if ((int)$entry['next_at'] > $now || in_array('cisza', $flags, true)) {
-                continue;
+            if ($line !== null) {
+                $report[] = $line;
             }
-            $report[] = $this->deliver($entry, $flags, $now, $expiresAt);
         }
         return $report;
+    }
+
+    /**
+     * One entry of a pass: dropped at its TTL, skipped until it is due, else delivered.
+     *
+     * @param array<string,mixed> $entry The entry.
+     * @param int                 $now   Unix seconds.
+     * @return array{id:string,wynik:string,status:int}|null The report line; null when the
+     *     entry was not due.
+     */
+    private function process(array $entry, int $now): ?array
+    {
+        $expiresAt = (int)$entry['received_at'] + $this->cfg->ttlS;
+        if ($now >= $expiresAt) {
+            $this->queue->remove($entry['entry']);
+            return ['id' => $entry['item_id'], 'wynik' => self::EXPIRED, 'status' => 0];
+        }
+        $flags = Verdicts::deliveryFlags($entry['text']);
+        if ((int)$entry['next_at'] > $now || in_array('cisza', $flags, true)) {
+            return null;
+        }
+        return $this->deliver($entry, $flags, $now, $expiresAt);
     }
 
     /**
@@ -94,8 +122,11 @@ final class Worker
      */
     private function deliver(array $entry, array $flags, int $now, int $expiresAt): array
     {
-        $body = (string)json_encode(Verdicts::payload($entry['item_id'], $entry['text']),
-            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        // The gateway never sends a comment the key may no longer use to its engine.
+        $payload = is_string($entry['profile'] ?? null) && $this->cfg->allowsProfile($entry['profile'])
+            ? Verdicts::payload($entry['item_id'], $entry['text'], ($entry['context'] ?? null) !== null)
+            : ['id' => $entry['item_id'], 'status' => 'nieocenione'];
+        $body = (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $secret = in_array('zly-podpis', $flags, true)
             ? 'nie-ten-sekret-' . $this->cfg->webhookSecret
             : $this->cfg->webhookSecret;
