@@ -95,7 +95,10 @@ composer install
 vendor/bin/phpunit
 ```
 
-CI runs the suite on PHP 7.4 and 8.3.
+CI runs the suite on PHP 7.4 and 8.3, `composer validate --strict`, `actionlint` on the
+workflows and `shellcheck` on the shell scripts; its actions are pinned to commit SHAs.
+`tests/Repo/Php74SyntaxTest.php` reads every PHP file for the PHP 8 syntax a 7.4 host
+cannot run, so a file no test loads is checked too.
 
 ## The mock gateway
 

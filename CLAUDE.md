@@ -9,7 +9,8 @@ FIRST when you change it). Nothing here names private code, hosts or secrets.
 
 - **PHP 7.4+, no dependencies beyond `ext-json`.** No PHP 8 syntax: no `match`,
   `readonly`, `mixed`, union types, promoted constructors, named arguments, `?->`,
-  `str_contains` or `str_starts_with`. CI runs every test on 7.4 and 8.3.
+  `str_contains` or `str_starts_with` (`tests/Repo/Php74SyntaxTest.php` scans every file).
+  CI runs every test on 7.4 and 8.3.
 - **Fail closed on what it does not know.** `Signature::verify` accepts only a
   well-formed, fresh, matching header. `WebhookPayload::parse` returns null for an unusable
   body and reads an unknown `status` or `kwalifikacja` as `nieocenione`: an unknown value is
