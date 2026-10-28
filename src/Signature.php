@@ -13,8 +13,11 @@ namespace Minos\Client;
  * minutes from its own clock, so a delivery captured on the way cannot be replayed later.
  *
  * {@see verify} is the reference verifier of the contract (`docs/contract.md`), unchanged:
- * `SignatureTest` checks both against the same test vector. The class has no dependencies
- * and no PHP 8 syntax, because it runs inside plugins on customers' hosts.
+ * `ContractDocumentTest` runs the contract's copy of it and this one on the same cases, and
+ * `SignatureTest` checks this one on the gateway's vector (`vectors/signature.json`).
+ * {@see check} gives the same answer with its reason, for the administrator's log. The class
+ * has no dependencies and no PHP 8 syntax, because it runs inside plugins on customers'
+ * hosts. An empty secret is the caller's to refuse, before either is called (README).
  */
 final class Signature
 {
@@ -23,6 +26,21 @@ final class Signature
 
     /** How far, in seconds, a delivery's timestamp may be from the receiver's clock. */
     public const DEFAULT_TOLERANCE_S = 300;
+
+    /** {@see check}: the signature is valid. */
+    public const OK = 'ok';
+
+    /** {@see check}: the header is not `t=<digits>,v1=<64 lower-case hex>` (once trimmed). */
+    public const MALFORMED = 'malformed';
+
+    /** {@see check}: the timestamp is further than the tolerance from the receiver's clock. */
+    public const STALE = 'stale';
+
+    /** {@see check}: the MAC does not match: another secret, or another body. */
+    public const MISMATCH = 'mismatch';
+
+    /** The header's form: the timestamp and the MAC. */
+    private const FORMAT = '/^t=(\d+),v1=([0-9a-f]{64})$/';
 
     /**
      * Whether a delivery carries a valid signature.
@@ -49,6 +67,39 @@ final class Signature
         }
         $expected = hash_hmac('sha256', $m[1] . '.' . $body, $secret);
         return hash_equals($expected, $m[2]);
+    }
+
+    /**
+     * Why a delivery's signature is valid or not: the answer of {@see verify} with its
+     * reason, checked in the same order (the header's form, the timestamp, the MAC compared
+     * in constant time). `check(...) === Signature::OK` exactly when `verify(...)` is true.
+     *
+     * The reason is for the forum administrator's log, to tell a clock that drifted from a
+     * wrong secret. It never goes into the HTTP answer: the gateway, or anyone else sending
+     * to the receiver, gets the same `401` whatever the reason.
+     *
+     * @param string $secret     The key's webhook secret.
+     * @param string $header     The value of the `X-Wergiliusz-Podpis` header.
+     * @param string $body       The EXACT bytes of the request body, before any parsing.
+     * @param int    $now        The receiver's clock, in unix seconds.
+     * @param int    $toleranceS The largest accepted distance between the two clocks.
+     * @return string {@see OK}, {@see MALFORMED}, {@see STALE} or {@see MISMATCH}.
+     */
+    public static function check(
+        string $secret,
+        string $header,
+        string $body,
+        int $now,
+        int $toleranceS = self::DEFAULT_TOLERANCE_S
+    ): string {
+        if (!preg_match(self::FORMAT, trim($header), $m)) {
+            return self::MALFORMED;
+        }
+        if (abs($now - (int)$m[1]) > $toleranceS) {
+            return self::STALE;
+        }
+        $expected = hash_hmac('sha256', $m[1] . '.' . $body, $secret);
+        return hash_equals($expected, $m[2]) ? self::OK : self::MISMATCH;
     }
 
     /**

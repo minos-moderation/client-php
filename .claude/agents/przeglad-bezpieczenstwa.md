@@ -1,6 +1,6 @@
 ---
 name: przeglad-bezpieczenstwa
-description: Pre-merge review of a PR to the Minos PHP client that touches src/ (signature verification, payload reading), docs/contract.md, vectors/ or the mock's delivery. Use once per such PR, before merge. Read-only; confirms findings by running code.
+description: Pre-merge review of a PR to the Minos PHP client that touches src/ (signature verification, payload reading), docs/contract.md, vectors/ or the mock's delivery. Use once per such PR, before merge. Read-only by instruction (Bash runs its checks and probes); confirms findings by running code.
 model: opus
 effort: high
 tools: Read, Grep, Glob, Bash

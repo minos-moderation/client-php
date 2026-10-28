@@ -58,9 +58,11 @@ final class EndToEndTest extends MockTestCase
             ['id' => 'k-1', 'tekst' => 'Świetny wpis!'],
             ['id' => 'k-2', 'tekst' => 'spadaj [minos:blokuj] [minos:kategoria=nekanie]'],
             ['id' => 'k-3', 'tekst' => self::CENSORED],
+            ['id' => 'k-4', 'tekst' => 'dzwoń [minos:dane-osobowe=telefon] [minos:kategoria]',
+                'kontekst' => [['rola' => 'inny', 'tekst' => 'podaj numer']]],
         ]]);
         self::assertSame(202, $status);
-        self::assertSame(['przyjete' => ['k-1', 'k-2', 'k-3']], $answer);
+        self::assertSame(['przyjete' => ['k-1', 'k-2', 'k-3', 'k-4']], $answer);
 
         exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../../mock-gateway/bin/worker.php') . ' --once 2>&1',
             $output, $exit);
@@ -69,9 +71,10 @@ final class EndToEndTest extends MockTestCase
         $deliveries = array_map(static function (string $line): array {
             return json_decode($line, true);
         }, file($received, FILE_IGNORE_NEW_LINES) ?: []);
-        self::assertCount(3, $deliveries);
+        self::assertCount(4, $deliveries);
         $verdicts = [];
         $masked = [];
+        $personalData = [];
         foreach ($deliveries as $delivery) {
             self::assertSame('application/json; charset=utf-8', $delivery['typ']);
             self::assertTrue(Signature::verify(Config::DEFAULT_SECRET, (string)$delivery['podpis'],
@@ -79,16 +82,21 @@ final class EndToEndTest extends MockTestCase
             $read = WebhookPayload::parse($delivery['body']);
             $verdicts[$read['id']] = $read['kwalifikacja'];
             $masked[$read['id']] = $read['ocenzurowany'];
+            $personalData[$read['id']] = $read['dane_osobowe'];
         }
         ksort($verdicts);
-        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane', 'k-3' => 'ocenzurowane'], $verdicts);
+        self::assertSame(['k-1' => 'bezpieczne', 'k-2' => 'zablokowane', 'k-3' => 'ocenzurowane', 'k-4' => 'bezpieczne'],
+            $verdicts);
+        self::assertSame(['rodzaj' => 'telefon', 'reakcja' => 'ukryj'], $personalData['k-4'], 'the context reached the verdict');
+        self::assertSame([], $personalData['k-1']);
         self::assertSame(mb_strlen(trim(self::CENSORED)), mb_strlen((string)$masked['k-3']),
             'the masked text is as long as the trimmed text that was sent');
     }
 
     public function testOneCommentPostedOverHttpGetsItsVerdictInTheResponse(): void
     {
-        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null,
+            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_SYNC' => '1']);
         $headers = ['X-Gateway-Key: ' . Config::DEFAULT_KEY, 'Content-Type: application/json'];
 
         foreach (['/api/v1/b2b/ocena', '/api/b2b/ocena'] as $path) {
@@ -109,6 +117,11 @@ final class EndToEndTest extends MockTestCase
             ['tekst' => 'x [minos:nieocenione]']);
         self::assertSame([200, ['status' => 'nieocenione']], [$status, $answer]);
 
+        // A category marker without a label is a valid comment, not a server error.
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", $headers,
+            ['tekst' => 'x [minos:kategoria]']);
+        self::assertSame([200, 'bezpieczne', []], [$status, $answer['kwalifikacja'] ?? null, $answer['kategorie'] ?? null]);
+
         [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
             array_merge($headers, ['X-Minos-Mock-Error: silnik_przeciazony']), ['tekst' => 'x']);
         self::assertSame([503, 'silnik_przeciazony'], [$status, $answer['blad']['kod']]);
@@ -117,13 +130,68 @@ final class EndToEndTest extends MockTestCase
         self::assertSame([], glob($this->dir . '/*') ?: []);
     }
 
+    public function testTheSynchronousRouteIsClosedByDefaultOverHttp(): void
+    {
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, ['MINOS_MOCK_DATA_DIR' => $this->dir]);
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
+            ['X-Gateway-Key: ' . Config::DEFAULT_KEY], ['tekst' => 'x']);
+        self::assertSame([404, 'nie_znaleziono'], [$status, $answer['blad']['kod']]);
+        [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena", [], ['tekst' => 'x']);
+        self::assertSame([401, 'brak_klucza'], [$status, $answer['blad']['kod']]);
+    }
+
     public function testAFreeKeyIsRefusedOnTheSynchronousRouteOverHttp(): void
     {
         $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null,
-            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => 'b2b_free']);
+            ['MINOS_MOCK_DATA_DIR' => $this->dir, 'MINOS_MOCK_KEY_CLASS' => 'b2b_free', 'MINOS_MOCK_SYNC' => '1']);
         [$status, $answer] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/ocena",
             ['X-Gateway-Key: ' . Config::DEFAULT_KEY], ['tekst' => 'x']);
         self::assertSame([403, 'tylko_klucze_platne'], [$status, $answer['blad']['kod']]);
+    }
+
+    /**
+     * The mock-only answers a client must survive: a `503` without a `kod`, a `503` that is
+     * not JSON, and a delivery that is signed but carries no readable payload.
+     */
+    public function testTheMockOnlyFailuresOverHttp(): void
+    {
+        mkdir($this->dir, 0700, true);
+        $received = $this->dir . '/received.jsonl';
+        $receiverPort = $this->serve(__DIR__ . '/fixtures', 'receiver.php', ['RECEIVER_OUT' => $received]);
+        $port = $this->serve(__DIR__ . '/../../mock-gateway/public', null, [
+            'MINOS_MOCK_WEBHOOK_URL' => "http://127.0.0.1:{$receiverPort}/webhook",
+            'MINOS_MOCK_DATA_DIR'    => $this->dir,
+            'MINOS_MOCK_DELAY_S'     => '0',
+            'MINOS_MOCK_SYNC'        => '1',
+        ]);
+        $key = 'X-Gateway-Key: ' . Config::DEFAULT_KEY;
+
+        foreach (['/api/v1/b2b/oceny', '/api/v1/b2b/ocena'] as $path) {
+            [$status, $body, $type] = $this->postRaw("http://127.0.0.1:{$port}{$path}",
+                [$key, 'X-Minos-Mock-Error: 503-bez-kodu'], '{}');
+            self::assertSame(503, $status, $path);
+            self::assertStringStartsWith('application/json', $type, $path);
+            self::assertArrayNotHasKey('kod', json_decode($body, true)['blad'], $path);
+
+            [$status, $body, $type] = $this->postRaw("http://127.0.0.1:{$port}{$path}",
+                [$key, 'X-Minos-Mock-Error: 503-nie-json'], '{}');
+            self::assertSame(503, $status, $path);
+            self::assertStringStartsWith('text/html', $type, $path);
+            self::assertNull(json_decode($body), $path);
+        }
+
+        [$status] = $this->post("http://127.0.0.1:{$port}/api/v1/b2b/oceny", [$key],
+            ['elementy' => [['id' => 'k-1', 'tekst' => 'x [minos:nieczytelne]']]]);
+        self::assertSame(202, $status);
+        exec(PHP_BINARY . ' ' . escapeshellarg(__DIR__ . '/../../mock-gateway/bin/worker.php') . ' --once 2>&1',
+            $output, $exit);
+        self::assertSame(0, $exit, implode("\n", $output));
+        $deliveries = file($received, FILE_IGNORE_NEW_LINES) ?: [];
+        self::assertCount(1, $deliveries);
+        $delivery = json_decode($deliveries[0], true);
+        self::assertSame(Signature::OK, Signature::check(Config::DEFAULT_SECRET, (string)$delivery['podpis'],
+            $delivery['body'], time()));
+        self::assertNull(WebhookPayload::parse($delivery['body']), 'signed, but no payload');
     }
 
     public function testAnotherPathIs404(): void
@@ -137,6 +205,11 @@ final class EndToEndTest extends MockTestCase
      * Starts PHP's built-in server and waits until it answers. The variables are also put
      * into this process's environment, for the worker CLI the test runs afterwards.
      *
+     * The port is one the system just gave out as free, and it counts as the server's only
+     * while the started process is still running: a server that could not bind (another
+     * process took the port meanwhile) exits, and then the test tries another port instead
+     * of talking to whatever answers there.
+     *
      * @param array<string,string> $env
      * @return int The port.
      */
@@ -147,7 +220,7 @@ final class EndToEndTest extends MockTestCase
             $this->env[] = $name;
         }
         for ($try = 0; $try < 5; $try++) {
-            $port = random_int(20000, 40000);
+            $port = self::freePort();
             $command = [PHP_BINARY, '-S', "127.0.0.1:{$port}", '-t', $docroot];
             if ($router !== null) {
                 $command[] = $docroot . '/' . $router;
@@ -157,12 +230,15 @@ final class EndToEndTest extends MockTestCase
             $server = proc_open($command, [1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
                 $pipes, null, getenv() + $env);
             self::assertIsResource($server);
-            for ($wait = 0; $wait < 50; $wait++) {
+            for ($wait = 0; $wait < 50 && proc_get_status($server)['running']; $wait++) {
                 $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.1);
                 if ($socket !== false) {
                     fclose($socket);
-                    $this->servers[] = [$server, $port];
-                    return $port;
+                    if (proc_get_status($server)['running']) {
+                        $this->servers[] = [$server, $port];
+                        return $port;
+                    }
+                    break;
                 }
                 usleep(100000);
             }
@@ -170,6 +246,44 @@ final class EndToEndTest extends MockTestCase
             proc_close($server);
         }
         self::fail('the built-in server did not start');
+    }
+
+    /**
+     * A port the system reports free on 127.0.0.1 at this moment.
+     */
+    private static function freePort(): int
+    {
+        $probe = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+        self::assertIsResource($probe, "no free port: {$errstr}");
+        $name = (string)stream_socket_get_name($probe, false);
+        fclose($probe);
+        $port = (int)substr($name, (int)strrpos($name, ':') + 1);
+        self::assertGreaterThan(0, $port);
+        return $port;
+    }
+
+    /**
+     * A POST whose answer is returned as it came.
+     *
+     * @param array<int,string> $headers
+     * @return array{0:int,1:string,2:string} The status, the raw body and the content type.
+     */
+    private function postRaw(string $url, array $headers, string $body): array
+    {
+        $handle = curl_init($url);
+        curl_setopt_array($handle, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_HTTPHEADER     => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_PROXY          => '',
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $answer = (string)curl_exec($handle);
+        $status = (int)curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $type = (string)curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
+        curl_close($handle);
+        return [$status, $answer, $type];
     }
 
     /**

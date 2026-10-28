@@ -8,10 +8,11 @@ declare(strict_types=1);
  *   php -S 127.0.0.1:8100 -t mock-gateway/public
  *
  * `POST /api/v1/b2b/oceny` (a batch) and `POST /api/v1/b2b/ocena` (one comment,
- * synchronously) answer like the real ones, also without `/v1` (`/api/b2b/…`), which the
- * real gateway rewrites them to; everything else is `404 nie_znaleziono`. A batch's
+ * synchronously) answer like the real ones, also without `/v1` (`/api/b2b/…`), the alias
+ * the gateway documents for its routes; everything else is `404 nie_znaleziono`. A batch's
  * verdicts are delivered by `bin/worker.php`, not here — as in the real gateway, the
- * request only queues. The synchronous route answers the verdict itself and queues nothing.
+ * request only queues. The synchronous route, once opened (`MINOS_MOCK_SYNC=1`), answers
+ * the verdict itself and queues nothing.
  */
 
 require __DIR__ . '/../autoload.php';
@@ -33,6 +34,12 @@ if (in_array($path, ['/api/v1/b2b/oceny', '/api/b2b/oceny'], true) && $method ==
 }
 
 http_response_code($answer['status']);
-header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
-echo json_encode($answer['body'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if (isset($answer['raw'])) {
+    // A mock-only scenario: a body that is not JSON (`X-Minos-Mock-Error: 503-nie-json`).
+    header('Content-Type: text/html; charset=utf-8');
+    echo $answer['raw'];
+} else {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($answer['body'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}

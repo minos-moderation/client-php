@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
 
+# Every action is pinned to the full commit SHA of a release, its version in the comment:
+# a moved tag cannot change what runs here. Bump them together, from the release's tag.
 jobs:
   php:
     name: PHP ${{ matrix.php }}
@@ -21,11 +23,43 @@ jobs:
         # 8.3: a current one.
         php: ['7.4', '8.3']
     steps:
-      - uses: actions/checkout@v5
-      - uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php }}
           extensions: curl, json, mbstring
           coverage: none
+      - run: composer validate --strict
       - run: composer install --no-interaction --no-progress --prefer-dist
       - run: vendor/bin/phpunit
+
+  lint:
+    name: Workflows and shell scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          # From the release's actionlint_1.7.12_checksums.txt.
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+      - name: shellcheck
+        run: |
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "no shell script found: the search is broken" >&2
+            exit 1
+          fi
+          shellcheck "${scripts[@]}"

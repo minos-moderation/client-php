@@ -16,8 +16,5 @@
         <testsuite name="repo">
             <directory>tests/Repo</directory>
         </testsuite>
-        <testsuite name="repo">
-            <directory>tests/Repo</directory>
-        </testsuite>
     </testsuites>
 </phpunit>

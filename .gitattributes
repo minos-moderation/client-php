@@ -1,1 +1,12 @@
 * text=auto eol=lf
+
+# The release archive (`composer install --prefer-dist`, the GitHub zip of a tag) carries
+# the library, the contract's copy, the gateway's vectors and the mock gateway, which the
+# plugins use from vendor/ (their end-to-end tests and their copy of the contract). It
+# leaves out what only this repository's own development needs.
+/tests export-ignore
+/.claude export-ignore
+/.github export-ignore
+/CLAUDE.md export-ignore
+/mock-gateway/CLAUDE.md export-ignore
+/phpunit.xml.dist export-ignore

@@ -68,6 +68,54 @@ final class SignatureTest extends TestCase
         }
     }
 
+    /**
+     * The header is trimmed before it is read, so the whitespace and line ending a server
+     * may leave around it change nothing; whitespace inside it is a malformed header.
+     */
+    public function testSurroundingWhitespaceIsTrimmedAndInnerWhitespaceIsNot(): void
+    {
+        $v = $this->vector;
+        foreach ([' ' . $v['header'] . "\r\n", "\t" . $v['header'], $v['header'] . "\n"] as $header) {
+            self::assertTrue(Signature::verify($v['secret'], $header, $v['body'], $v['timestamp']), json_encode($header));
+            self::assertSame(Signature::OK, Signature::check($v['secret'], $header, $v['body'], $v['timestamp']));
+        }
+        $mac = substr($v['header'], strpos($v['header'], 'v1=') + 3);
+        foreach (['t=' . $v['timestamp'] . ', v1=' . $mac, 't= ' . $v['timestamp'] . ',v1=' . $mac] as $header) {
+            self::assertFalse(Signature::verify($v['secret'], $header, $v['body'], $v['timestamp']), $header);
+            self::assertSame(Signature::MALFORMED, Signature::check($v['secret'], $header, $v['body'], $v['timestamp']));
+        }
+    }
+
+    /**
+     * The MAC covers `t` exactly as the header writes it: a timestamp with leading zeros
+     * verifies when it was signed in that form, and not with the MAC of the plain number.
+     */
+    public function testATimestampWithLeadingZerosIsSignedAsWritten(): void
+    {
+        $v = $this->vector;
+        $t = '00' . $v['timestamp'];
+        $signed = 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $v['body'], $v['secret']);
+        self::assertTrue(Signature::verify($v['secret'], $signed, $v['body'], $v['timestamp']));
+
+        $mac = substr($v['header'], strpos($v['header'], 'v1=') + 3);
+        self::assertFalse(Signature::verify($v['secret'], 't=' . $t . ',v1=' . $mac, $v['body'], $v['timestamp']));
+    }
+
+    /**
+     * On the gateway's vector, each way a delivery can fail has its own reason.
+     */
+    public function testCheckNamesTheReason(): void
+    {
+        $v = $this->vector;
+        self::assertSame(Signature::OK, Signature::check($v['secret'], $v['header'], $v['body'], $v['timestamp']));
+        self::assertSame(Signature::STALE, Signature::check($v['secret'], $v['header'], $v['body'], $v['timestamp'] + 301));
+        self::assertSame(Signature::MISMATCH, Signature::check($v['secret'], $v['header'], $v['body'] . ' ', $v['timestamp']));
+        self::assertSame(Signature::MISMATCH, Signature::check($v['secret'] . 'x', $v['header'], $v['body'], $v['timestamp']));
+        self::assertSame(Signature::MALFORMED, Signature::check($v['secret'], 'v1=' . $v['header'], $v['body'], $v['timestamp']));
+        self::assertSame(4, count(array_unique([Signature::OK, Signature::MALFORMED, Signature::STALE, Signature::MISMATCH])),
+            'four distinct reasons');
+    }
+
     public function testAMalformedHeaderFails(): void
     {
         $v = $this->vector;
@@ -82,6 +130,7 @@ final class SignatureTest extends TestCase
         ];
         foreach ($malformed as $header) {
             self::assertFalse(Signature::verify($v['secret'], $header, $v['body'], $v['timestamp']), $header);
+            self::assertSame(Signature::MALFORMED, Signature::check($v['secret'], $header, $v['body'], $v['timestamp']), $header);
         }
     }
 }

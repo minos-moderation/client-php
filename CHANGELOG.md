@@ -3,6 +3,86 @@
 What changes in `minos-moderation/client-php`, release by release. The version policy is at
 the end of this file.
 
+## 0.2.0
+
+The contract's copy brought up to the gateway's documentation of 2026-10-28, the mock with
+it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin moves to
+`^0.2` in a change of its own (see the version policy).
+
+### The contract
+
+- `docs/contract.md` follows the gateway's documentation as of 2026-10-28 (0.1.0: as of
+  2026-10-01). New in it: the optional conversation context of a comment (`kontekst`, at
+  most 8 entries `{rola: autor|inny, tekst}` of 500 characters) with its refusals
+  `400 bledny_kontekst` and `413 za_duzy_kontekst`; the `dane_osobowe` section of a
+  verdict (`{rodzaj, reakcja}`) for a comment sent with a context; the body ceilings that
+  fit it (1,727,104 bytes for a batch, 101,920 for the synchronous route); `wsparcie` also
+  for a crisis under a category the gateway cannot name; the B2B list of profiles
+  (`forum_adult`, `forum_teen`, `blog_comments`, `ig_comments`, `api_generic`) and
+  `403 profil_niedozwolony` for any other, even one the key lists; personal data replaced
+  before the engine reads a comment, and `nieocenione` when that step cannot vouch for a
+  text or the key no longer allows a queued comment's profile; the queue of 350 comments
+  assessed about 30 a minute; the synchronous route's own switch (closed in production)
+  and its answer times with a context (30 s, 42 s with two engines); a failed DNS lookup as
+  a failed, retried delivery, and the webhook address checks (`@`, a backslash, whitespace
+  and control characters refused, the delivery going to the rebuilt URL); the TTL, 15
+  minutes by default and at most 30.
+- A plugin built on the 0.1.0 copy keeps working: it sends no context, so it meets neither
+  the new refusals nor the section, and every new `nieocenione` goes to its fail-open or
+  fail-closed setting. The copy's status says why, item by item.
+
+### The library, `Minos\Client`
+
+- `WebhookPayload::parse` returns one more key, `dane_osobowe`: `[]` without the section,
+  else `['rodzaj' => ?string, 'reakcja' => string]`. A `reakcja` it does not know reads as
+  `nieocenione`, and a kind it does not know is kept. The lists are the new constants
+  `WebhookPayload::PERSONAL_DATA_KINDS` and `PERSONAL_DATA_REACTIONS`. A plugin that reads
+  the other keys is unaffected.
+- `WebhookPayload::parse` fails closed on two more shapes the contract never sends: an
+  `ocenzurowany` that is empty or masks nothing (no `█`) reads as absent, so the plugin
+  holds the comment instead of publishing it, and `kategorie` is read only from a JSON
+  list (an object names no category). An unknown category label is still kept.
+
+- `Signature::check($secret, $header, $body, $now, $toleranceS = 300)`, new and additive:
+  the answer of `verify` with its reason, `Signature::OK`, `MALFORMED`, `STALE` or
+  `MISMATCH`, for the administrator's log (never for the HTTP answer). `check(...) === OK`
+  exactly when `verify(...)` is true; `verify` stays the contract's reference verifier,
+  unchanged, and neither guards an empty secret (the caller does).
+- The README names the public API ("Versioning") and what the library does at the edges;
+  `tests/Repo/PublicApiTest.php` holds the API to a declared list.
+
+### The mock gateway
+
+- The new codes, ceilings and checks of the contract: the context and its refusals, the B2B
+  list of profiles, a queue of 350 by default, a 10 s delivery timeout. A batch is checked
+  as the contract orders it: every item's shape, id, text and length, then every item's
+  profile, then every item's context; a JSON object is no longer taken for a list, nor a
+  list for an object.
+- The synchronous route is closed by default, as in production: `404 nie_znaleziono` to
+  the key. `MINOS_MOCK_SYNC=1` opens it.
+- New markers: `[minos:wsparcie]` (support without a category) and
+  `[minos:dane-osobowe=<rodzaj>[:<reakcja>]]` (the section, for a comment sent with a
+  context). A `[minos:kategoria]` without a label is ignored instead of breaking the route
+  and the worker.
+- One broken queue entry no longer stops the worker: it is reported `blad` and dropped. A
+  queued comment whose profile the key no longer allows is delivered as `nieocenione`.
+- The worker signs every attempt when it is made: a long pass over slow receivers no longer
+  sends signatures already stale. Its category list is the library's
+  (`WebhookPayload::CATEGORIES`), no longer a copy.
+- Mock-only failures to test against: `X-Minos-Mock-Error: 503-bez-kodu` and
+  `503-nie-json` on both routes, and the `[minos:nieczytelne]` delivery, signed but no
+  payload.
+
+### The package
+
+- `docs/plugin-behaviour.md`, new: the rules every Minos plugin shares, from the plugins'
+  security reviews of 2026-09-30 and the owner's decisions of 2026-10-28, each with a stable
+  identifier (`F1`…`D2`) that the plugins' compliance tables map to their code and tests.
+  It is their one public source; a change to one rule is a decision for every plugin.
+- The release archive leaves out `tests/`, `.claude/`, `.github/`, the `CLAUDE.md` files and
+  `phpunit.xml.dist`; it keeps `src/`, `docs/`, `vectors/` and `mock-gateway/`, which the
+  plugins use from `vendor/`.
+
 ## 0.1.0
 
 The first tagged release: what the Minos PHP plugins bundle and pin with `^0.1`. PHP 7.4 or

@@ -6,28 +6,38 @@ namespace Minos\Mock;
 
 /**
  * The mock's two B2B routes: `POST /api/v1/b2b/oceny` ({@see handle}) checks a batch the way
- * the real gateway does and queues it; `POST /api/v1/b2b/ocena` ({@see handleSync}) checks one
- * comment and answers its verdict at once.
+ * the contract describes the gateway's and queues it; `POST /api/v1/b2b/ocena`
+ * ({@see handleSync}) checks one comment and answers its verdict at once.
  *
- * The checks, their order and the error codes follow the gateway's routes
+ * The checks, their order and the error codes follow the contract's copy
  * (`docs/contract.md` → each route's Errors). The batch: the key, the body's size, the JSON,
- * the webhook, the batch item by item (whole or not at all, with the item's position in
- * `blad.element`), the profiles, the queue's room. The synchronous route: the key and its
- * class, the body's size, the JSON, then the rules every batch item meets ({@see comment}),
- * without `id` and without `element`; nothing is queued. The key's rate limits are not
- * simulated — ask for any refusal of the route with the mock-only header
- * {@see FORCE_HEADER} instead.
+ * the webhook, then the batch whole or not at all — first every item's shape, id, text and
+ * length, then every item's profile, then every item's conversation context — and the
+ * queue's room, each refusal of an item naming its position in `blad.element`. Where the
+ * copy places no check (the body's size and the JSON against the webhook, the context in
+ * the batch), the order is the mock's, and the README says so. The synchronous route: the
+ * key, the route's own switch, the key's class, the body's size, the JSON, the text, the
+ * profile, the context, without `id` and without `element`; nothing is queued. The key's
+ * rate limits are not simulated — ask for any refusal of the route with the mock-only
+ * header {@see FORCE_HEADER} instead.
+ *
+ * The body is decoded with JSON objects kept as objects, so a JSON object is never taken for
+ * a list, nor a list for an object: the contract tells them apart (`elementy` is a list, an
+ * item and a context entry are objects, `kontekst` is a list).
  */
 final class Intake
 {
     /**
      * Mock-only request header: answer with this documented error code instead of
-     * assessing. It does not exist in the real gateway.
+     * assessing, or with one of {@see MOCK_SCENARIOS}. It does not exist in the gateway.
      */
     public const FORCE_HEADER = 'X-Minos-Mock-Error';
 
     /** An item id: 1–64 characters, no spaces, no content. */
     private const ITEM_ID = '/^[A-Za-z0-9._:-]{1,64}\z/';
+
+    /** The roles of a context entry: the assessed comment's author, or anyone else. */
+    private const CONTEXT_ROLES = ['autor', 'inny'];
 
     /** Seconds after which a client refused for a full queue may try again. */
     private const FULL_RETRY_S = 60;
@@ -35,10 +45,19 @@ final class Intake
     /** The most bytes one character may take in the body: an escaped surrogate pair. */
     private const ESCAPED_CHAR_BYTES = 12;
 
+    /** Bytes the body ceiling grants an item's fields other than its texts. */
+    private const ITEM_OVERHEAD_BYTES = 1024;
+
+    /** Bytes the body ceiling grants a context entry's fields other than its text. */
+    private const CONTEXT_ENTRY_OVERHEAD_BYTES = 64;
+
+    /** Bytes the body ceiling grants the rest of the body. */
+    private const BODY_OVERHEAD_BYTES = 16384;
+
     /**
      * Every refusal of the contract: code → [HTTP status, message, `ponow_za_s`, `element`
-     * of a forced refusal on the batch route]. The messages are the real gateway's; a
-     * client reads `kod`, never `komunikat`.
+     * of a forced refusal on the batch route]. The messages follow the gateway's; a client
+     * reads `kod`, never `komunikat`.
      */
     private const ERRORS = [
         'brak_klucza'              => [401, 'Ta trasa wymaga klucza B2B.', null, null],
@@ -51,8 +70,10 @@ final class Intake
         'bledny_identyfikator'     => [400, 'Identyfikator: 1–64 znaki z zakresu A–Z, a–z, 0–9, `.`, `_`, `:`, `-`.', null, 0],
         'powtorzony_identyfikator' => [400, 'Identyfikatory w jednym żądaniu muszą być różne.', null, 1],
         'brak_tekstu'              => [400, 'Element nie ma treści do oceny.', null, 0],
+        'bledny_kontekst'          => [400, 'Pole `kontekst` musi być listą wpisów {rola: autor albo inny, tekst}.', null, 0],
         'za_duzo_elementow'        => [413, 'Jedno żądanie przyjmuje najwyżej %d komentarzy.', null, null],
         'limit_dlugosci'           => [413, 'Komentarz jest dłuższy niż %d znaków.', null, 0],
+        'za_duzy_kontekst'         => [413, 'Kontekst może mieć najwyżej 8 wpisów po 500 znaków.', null, 0],
         'za_duze_zadanie'          => [413, 'To żądanie jest za duże.', null, null],
         'kolejka_pelna'            => [429, 'Kolejka ocen jest pełna. Spróbuj ponownie za chwilę.', self::FULL_RETRY_S, null],
         'limit_minutowy_klucza'    => [429, 'Za dużo zapytań w tej minucie dla tego klucza.', 30, null],
@@ -63,6 +84,17 @@ final class Intake
         'silnik_przeciazony'       => [503, 'Silnik oceny jest chwilowo zajęty. Spróbuj ponownie za chwilę.', 30, null],
         'nie_znaleziono'           => [404, 'Nie ma tu nic.', null, null],
     ];
+
+    /** The message of a profile the key lists but the B2B list does not. */
+    private const NOT_B2B_PROFILE = 'Ten profil nie jest dostępny dla kluczy B2B (dozwolone: forum_adult, forum_teen, blog_comments, ig_comments, api_generic).';
+
+    /**
+     * Mock-only answers {@see FORCE_HEADER} may ask for on either route, which no contract
+     * code describes: a `503` whose body has no `kod` (`503-bez-kodu`), and a `503` whose
+     * body is not JSON at all (`503-nie-json`), as a proxy in front of a gateway may send.
+     * A client tells a `503` by its status, never by its code or its body.
+     */
+    public const MOCK_SCENARIOS = ['503-bez-kodu', '503-nie-json'];
 
     /** Codes only the batch route sends ({@see batchCodes}). */
     private const BATCH_ONLY = [
@@ -112,13 +144,34 @@ final class Intake
     }
 
     /**
+     * The body ceiling of a route: every item at its character ceiling with a full context,
+     * each character escaped at 12 bytes (a character outside the BMP sent as ASCII-escaped
+     * JSON is a surrogate pair, `😀`), 1 KiB for an item's other fields, 64 bytes
+     * for a context entry's, and 16 KiB for the rest. So a valid request is never refused for
+     * how its JSON encoder escapes it (`json_encode` without `JSON_UNESCAPED_UNICODE`).
+     *
+     * @param Config $cfg   The configuration (the item and character ceilings).
+     * @param int    $items The items the route takes at most (1 on the synchronous route).
+     * @return int Bytes: 1,727,104 on the batch route and 101,920 on the synchronous one at
+     *     the defaults.
+     */
+    public static function bodyCeiling(Config $cfg, int $items): int
+    {
+        $context = Config::MAX_CONTEXT_ENTRIES
+            * (Config::MAX_CONTEXT_CHARS * self::ESCAPED_CHAR_BYTES + self::CONTEXT_ENTRY_OVERHEAD_BYTES);
+        return $items * ($cfg->maxChars * self::ESCAPED_CHAR_BYTES + self::ITEM_OVERHEAD_BYTES + $context)
+            + self::BODY_OVERHEAD_BYTES;
+    }
+
+    /**
      * Handles one batch request (`POST /api/v1/b2b/oceny`).
      *
      * @param string|null $key    The `X-Gateway-Key` header, or null.
      * @param string|null $force  The {@see FORCE_HEADER} header, or null.
      * @param string      $body   The raw body.
      * @param int         $now    Unix seconds.
-     * @return array{status:int,body:array} `202 {przyjete}` or `{blad}`.
+     * @return array{status:int,body:array,raw?:string} `202 {przyjete}` or `{blad}` (or a
+     *     forced {@see MOCK_SCENARIOS} answer).
      */
     public function handle(?string $key, ?string $force, string $body, int $now): array
     {
@@ -128,18 +181,18 @@ final class Intake
         if ($force !== null && $force !== '') {
             return $this->forced($force, true);
         }
-        if (strlen($body) > $this->bodyCeiling($this->cfg->maxItems)) {
+        if (strlen($body) > self::bodyCeiling($this->cfg, $this->cfg->maxItems)) {
             return self::refuse('za_duze_zadanie');
         }
-        $decoded = json_decode($body, true);
-        if (!is_array($decoded)) {
+        $decoded = json_decode($body);
+        if (!$decoded instanceof \stdClass) {
             return self::answer(400, 'bledne_wejscie', 'Nie rozumiem tego żądania.');
         }
         if ($this->cfg->webhookUrl === null) {
             return self::refuse('brak_webhooka');
         }
 
-        $parsed = $this->items($decoded['elementy'] ?? null, $now);
+        $parsed = $this->items(get_object_vars($decoded)['elementy'] ?? null, $now);
         if (isset($parsed['blad'])) {
             return $parsed['blad'];
         }
@@ -157,13 +210,18 @@ final class Intake
      * @param string|null $key   The `X-Gateway-Key` header, or null.
      * @param string|null $force The {@see FORCE_HEADER} header, or null.
      * @param string      $body  The raw body.
-     * @return array{status:int,body:array} `200` with the verdict ({@see Verdicts::verdict}),
-     *     or `{blad}` without `element`.
+     * @return array{status:int,body:array,raw?:string} `200` with the verdict
+     *     ({@see Verdicts::verdict}), or `{blad}` without `element` (or a forced
+     *     {@see MOCK_SCENARIOS} answer).
      */
     public function handleSync(?string $key, ?string $force, string $body): array
     {
         if (!$this->knowsKey($key)) {
             return self::refuse('brak_klucza');
+        }
+        // Closed, the route is absent: the class, the body and a forced code are not looked at.
+        if (!$this->cfg->syncOpen) {
+            return self::refuse('nie_znaleziono');
         }
         if (!$this->cfg->isPaidKey()) {
             return self::refuse('tylko_klucze_platne');
@@ -171,23 +229,32 @@ final class Intake
         if ($force !== null && $force !== '') {
             return $this->forced($force, false);
         }
-        if (strlen($body) > $this->bodyCeiling(1)) {
+        if (strlen($body) > self::bodyCeiling($this->cfg, 1)) {
             return self::refuse('za_duze_zadanie');
         }
-        if (!json_decode($body) instanceof \stdClass) {
+        $decoded = json_decode($body);
+        if (!$decoded instanceof \stdClass) {
             return self::answer(400, 'bledne_wejscie', 'Nie rozumiem tego żądania.');
         }
-        $decoded = (array)json_decode($body, true);
+        $fields = get_object_vars($decoded);
         // A `tekst` that is there but is not a string is a malformed request, not a missing
         // text (a batch item still answers `brak_tekstu`, as its contract says).
-        if (array_key_exists('tekst', $decoded) && !is_string($decoded['tekst'])) {
+        if (array_key_exists('tekst', $fields) && !is_string($fields['tekst'])) {
             return self::answer(400, 'bledne_wejscie', 'Pole `tekst` musi być napisem.');
         }
-        $comment = $this->comment($decoded, null);
-        if (isset($comment['blad'])) {
-            return $comment['blad'];
+        $text = $this->text($fields, null);
+        if (isset($text['blad'])) {
+            return $text['blad'];
         }
-        return ['status' => 200, 'body' => Verdicts::verdict($comment['text'])];
+        $profile = $this->profile($fields, null);
+        if (isset($profile['blad'])) {
+            return $profile['blad'];
+        }
+        $context = self::context($fields, null);
+        if (isset($context['blad'])) {
+            return $context['blad'];
+        }
+        return ['status' => 200, 'body' => Verdicts::verdict($text['text'], $context['context'] !== null)];
     }
 
     /**
@@ -202,15 +269,18 @@ final class Intake
     }
 
     /**
-     * Validates the batch and builds the queue items.
+     * Validates the batch, whole or not at all, and builds the queue items: every item's
+     * shape, id, text and length first, then every item's profile, then every item's
+     * context, so a refusal names the first item that fails the earliest step.
      *
-     * @param mixed $batch The `elementy` field.
+     * @param mixed $batch The `elementy` field, as decoded with objects kept.
      * @param int   $now   Unix seconds.
      * @return array{elementy:array<int,array<string,mixed>>}|array{blad:array{status:int,body:array}}
      */
     private function items($batch, int $now): array
     {
-        if (!is_array($batch) || ($batch !== [] && array_keys($batch) !== range(0, count($batch) - 1))) {
+        // A JSON list decodes to an array, a JSON object to a \stdClass.
+        if (!is_array($batch)) {
             return ['blad' => self::refuse('bledne_wejscie')];
         }
         if ($batch === []) {
@@ -219,13 +289,15 @@ final class Intake
         if (count($batch) > $this->cfg->maxItems) {
             return ['blad' => self::refuse('za_duzo_elementow', $this->cfg->maxItems)];
         }
+
         $seen = [];
         $items = [];
         foreach ($batch as $position => $element) {
-            if (!is_array($element)) {
+            if (!$element instanceof \stdClass) {
                 return ['blad' => self::answer(400, 'bledne_wejscie', 'Każdy element musi być obiektem.', null, $position)];
             }
-            $id = $element['id'] ?? null;
+            $fields = get_object_vars($element);
+            $id = $fields['id'] ?? null;
             if (!is_string($id) || !preg_match(self::ITEM_ID, $id)) {
                 return ['blad' => self::refuse('bledny_identyfikator', null, $position)];
             }
@@ -233,35 +305,51 @@ final class Intake
                 return ['blad' => self::refuse('powtorzony_identyfikator', null, $position)];
             }
             $seen[$id] = true;
-            $comment = $this->comment($element, $position);
-            if (isset($comment['blad'])) {
-                return $comment;
+            $text = $this->text($fields, $position);
+            if (isset($text['blad'])) {
+                return $text;
             }
+            $items[$position] = ['fields' => $fields, 'id' => $id, 'text' => $text['text']];
+        }
+        foreach ($items as $position => $item) {
+            $profile = $this->profile($item['fields'], $position);
+            if (isset($profile['blad'])) {
+                return $profile;
+            }
+            $items[$position]['profile'] = $profile['profile'];
+        }
+        $queued = [];
+        foreach ($items as $position => $item) {
+            $context = self::context($item['fields'], $position);
+            if (isset($context['blad'])) {
+                return $context;
+            }
+            $meta = $item['fields']['meta'] ?? null;
             // Only these fields enter the queue: a `webhook` or `url` in the request is
-            // never read, like in the real gateway (SSRF).
-            $items[] = [
-                'item_id'     => $id,
-                'text'        => $comment['text'],
-                'profile'     => $comment['profile'],
-                'meta'        => is_array($element['meta'] ?? null) ? $element['meta'] : null,
+            // never read, like in the gateway (SSRF).
+            $queued[] = [
+                'item_id'     => $item['id'],
+                'text'        => $item['text'],
+                'profile'     => $item['profile'],
+                'meta'        => $meta instanceof \stdClass ? json_decode((string)json_encode($meta), true) : null,
+                'context'     => $context['context'],
                 'received_at' => $now,
                 'next_at'     => $now + $this->cfg->delayS,
             ];
         }
-        return ['elementy' => $items];
+        return ['elementy' => $queued];
     }
 
     /**
-     * The rules every comment meets on both routes, in the gateway's order: its text, its
-     * length, its profile.
+     * A comment's text: present, and within the character ceiling once trimmed.
      *
-     * @param array<mixed> $comment  A batch item, or the synchronous route's body.
-     * @param int|null     $position The item's position in the batch; null on the synchronous
-     *     route, whose refusals name no `element`.
-     * @return array{text:string,profile:string}|array{blad:array{status:int,body:array}}
-     *     The trimmed text and the profile, or the refusal.
+     * @param array<string,mixed> $comment  A batch item's fields, or the synchronous body's.
+     * @param int|null            $position The item's position in the batch; null on the
+     *     synchronous route, whose refusals name no `element`.
+     * @return array{text:string}|array{blad:array{status:int,body:array}} The trimmed text, or
+     *     the refusal.
      */
-    private function comment(array $comment, ?int $position): array
+    private function text(array $comment, ?int $position): array
     {
         $text = is_string($comment['tekst'] ?? null) ? trim($comment['tekst']) : '';
         if ($text === '') {
@@ -270,11 +358,65 @@ final class Intake
         if (mb_strlen($text) > $this->cfg->maxChars) {
             return ['blad' => self::refuse('limit_dlugosci', $this->cfg->maxChars, $position)];
         }
+        return ['text' => $text];
+    }
+
+    /**
+     * A comment's profile: the one it names, or the key's first, and in either case one on
+     * the B2B list and on the key's ({@see Config::allowsProfile}).
+     *
+     * @param array<string,mixed> $comment  A batch item's fields, or the synchronous body's.
+     * @param int|null            $position The item's position, or null.
+     * @return array{profile:string}|array{blad:array{status:int,body:array}}
+     */
+    private function profile(array $comment, ?int $position): array
+    {
         $profile = $comment['profil'] ?? ($this->cfg->profiles[0] ?? '');
-        if (!is_string($profile) || !in_array($profile, $this->cfg->profiles, true)) {
+        if (is_string($profile) && !in_array($profile, Config::B2B_PROFILES, true)) {
+            return ['blad' => self::answer(403, 'profil_niedozwolony', self::NOT_B2B_PROFILE, null, $position)];
+        }
+        if (!is_string($profile) || !$this->cfg->allowsProfile($profile)) {
             return ['blad' => self::refuse('profil_niedozwolony', null, $position)];
         }
-        return ['text' => $text, 'profile' => $profile];
+        return ['profile' => $profile];
+    }
+
+    /**
+     * A comment's conversation context (`kontekst`): absent, `null` or `[]` is none; else a
+     * list of at most 8 entries `{rola: autor|inny, tekst}`, each text 1–500 characters once
+     * trimmed. The number of entries is checked before the entries, as the contract lists it.
+     *
+     * @param array<string,mixed> $comment  A batch item's fields, or the synchronous body's.
+     * @param int|null            $position The item's position, or null.
+     * @return array{context:array<int,array{rola:string,tekst:string}>|null}|array{blad:array{status:int,body:array}}
+     *     The checked entries (null when there is no context), or the refusal.
+     */
+    private static function context(array $comment, ?int $position): array
+    {
+        $raw = $comment['kontekst'] ?? null;
+        if ($raw === null || $raw === []) {
+            return ['context' => null];
+        }
+        if (!is_array($raw)) {
+            return ['blad' => self::refuse('bledny_kontekst', null, $position)];
+        }
+        if (count($raw) > Config::MAX_CONTEXT_ENTRIES) {
+            return ['blad' => self::refuse('za_duzy_kontekst', null, $position)];
+        }
+        $entries = [];
+        foreach ($raw as $entry) {
+            $fields = $entry instanceof \stdClass ? get_object_vars($entry) : null;
+            $role = $fields['rola'] ?? null;
+            $text = is_string($fields['tekst'] ?? null) ? trim($fields['tekst']) : '';
+            if ($fields === null || !in_array($role, self::CONTEXT_ROLES, true) || $text === '') {
+                return ['blad' => self::refuse('bledny_kontekst', null, $position)];
+            }
+            if (mb_strlen($text) > Config::MAX_CONTEXT_CHARS) {
+                return ['blad' => self::refuse('za_duzy_kontekst', null, $position)];
+            }
+            $entries[] = ['rola' => $role, 'tekst' => $text];
+        }
+        return ['context' => $entries];
     }
 
     /**
@@ -283,11 +425,19 @@ final class Intake
      * @param string $code    The header's code.
      * @param bool   $inBatch Whether the route takes a batch. There, a forced item refusal
      *     names the position a real one could; the synchronous route names none.
-     * @return array{status:int,body:array} The refusal, or `400 atrapa_nieznany_kod` for a
-     *     code the route never sends.
+     * @return array{status:int,body:array,raw?:string} The refusal, one of
+     *     {@see MOCK_SCENARIOS} (`raw`: a body to send as it is, as `text/html`), or
+     *     `400 atrapa_nieznany_kod` for a code the route never sends.
      */
     private function forced(string $code, bool $inBatch): array
     {
+        if ($code === '503-bez-kodu') {
+            return ['status' => 503, 'body' => ['blad' => ['komunikat' => 'Usługa jest chwilowo niedostępna.']]];
+        }
+        if ($code === '503-nie-json') {
+            return ['status' => 503, 'body' => [],
+                'raw' => "<html><body><h1>503 Service Unavailable</h1></body></html>\n"];
+        }
         if (!in_array($code, $inBatch ? self::batchCodes() : self::syncCodes(), true)) {
             return ['status' => 400, 'body' => ['blad' => [
                 'kod'       => 'atrapa_nieznany_kod',
@@ -295,22 +445,6 @@ final class Intake
             ]]];
         }
         return self::refuse($code, $this->limitFor($code), $inBatch ? self::ERRORS[$code][3] : null);
-    }
-
-    /**
-     * The body ceiling of the real gateway: every item at its character ceiling, 1 KiB for
-     * its other fields, 16 KiB for the rest. A character may take 12 bytes (a character
-     * outside the BMP sent as ASCII-escaped JSON is a surrogate pair, `\ud83d\ude00`), so a
-     * valid comment is never refused for how its JSON encoder escapes it (`json_encode`
-     * without `JSON_UNESCAPED_UNICODE`).
-     *
-     * @param int $items The items the route takes at most (1 on the synchronous route).
-     * @return int Bytes: 53,408 on the synchronous route and 756,864 on the batch route
-     *     with the defaults.
-     */
-    private function bodyCeiling(int $items): int
-    {
-        return $items * ($this->cfg->maxChars * self::ESCAPED_CHAR_BYTES + 1024) + 16384;
     }
 
     /**
