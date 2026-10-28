@@ -75,6 +75,10 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
 
 ### The package
 
+- `docs/plugin-behaviour.md`, new: the rules every Minos plugin shares, from the plugins'
+  security reviews of 2026-09-30 and the owner's decisions of 2026-10-28, each with a stable
+  identifier (`F1`…`D2`) that the plugins' compliance tables map to their code and tests.
+  It is their one public source; a change to one rule is a decision for every plugin.
 - The release archive leaves out `tests/`, `.claude/`, `.github/`, the `CLAUDE.md` files and
   `phpunit.xml.dist`; it keeps `src/`, `docs/`, `vectors/` and `mock-gateway/`, which the
   plugins use from `vendor/`.

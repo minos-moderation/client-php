@@ -9,6 +9,7 @@ to develop against.
 |---|---|
 | `src/` | `Minos\Client`: `Signature` (verify a delivery) and `WebhookPayload` (read one). PHP 7.4+, no dependencies beyond `ext-json`, meant to be bundled into plugins. |
 | `docs/contract.md` | The contract, from the client's side: the request, the errors, the webhook, the signature and a plugin's receiving checklist |
+| `docs/plugin-behaviour.md` | The rules every Minos plugin shares beyond the contract (failure modes, what is sent, applying a verdict, packaging), each with a stable identifier for the plugins' compliance tables. A change to one rule is a decision for every plugin. |
 | `vectors/` | The gateway's test vectors (the webhook signature) |
 | `mock-gateway/` | A local stand-in for the gateway's B2B routes (batch and synchronous) and its delivery worker |
 | `tests/` | PHPUnit: the library, the mock, the contract document, the Claude Code rules |
