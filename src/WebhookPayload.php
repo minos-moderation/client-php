@@ -15,9 +15,12 @@ namespace Minos\Client;
  *   the three known values, reads as `nieocenione` — the same rule the gateway applies to
  *   an engine action it does not know. What happens to such a comment is the plugin's
  *   fail-open or fail-closed setting, never a guess;
- * - a category label outside {@see CATEGORIES} is kept: the list may grow, and dropping a
- *   label would hide it from the forum's moderators;
- * - `ocenzurowany` is read only together with `ocenzurowane`;
+ * - `kategorie` is read only from a JSON list; a category label outside {@see CATEGORIES}
+ *   is kept: the list may grow, and dropping a label would hide it from the forum's
+ *   moderators;
+ * - `ocenzurowany` is read only together with `ocenzurowane`, and only as a text that masks
+ *   something (at least one `█`). An empty or unmasked one reads as absent, so the plugin
+ *   holds the comment, as the receiving checklist says for a missing one;
  * - the `dane_osobowe` section (a comment sent with a conversation context that carries a
  *   personal datum) is read as `{rodzaj, reakcja}`: a `reakcja` other than the three known
  *   ones reads as `nieocenione` (the question got no usable answer), and a kind outside
@@ -59,6 +62,9 @@ final class WebhookPayload
     /** The opaque `wersja`: 16 hex characters. */
     private const VERSION = '/^[0-9a-f]{16}\z/';
 
+    /** The mask character, U+2588 FULL BLOCK, in UTF-8 (no mbstring needed). */
+    private const MASK = "\xE2\x96\x88";
+
     /**
      * Reads a delivery body.
      *
@@ -69,10 +75,12 @@ final class WebhookPayload
      */
     public static function parse(string $body): ?array
     {
-        $data = json_decode($body, true);
-        if (!is_array($data)) {
+        // Objects stay objects, so a JSON list is never read as an object, nor one as a list.
+        $decoded = json_decode($body);
+        if (!$decoded instanceof \stdClass) {
             return null;
         }
+        $data = get_object_vars($decoded);
         $id = $data['id'] ?? null;
         if (!is_string($id) || !preg_match(self::ITEM_ID, $id)) {
             return null;
@@ -85,6 +93,7 @@ final class WebhookPayload
         }
 
         $categories = [];
+        // A JSON list decodes to an array, a JSON object to a \stdClass: only a list is read.
         foreach ((is_array($data['kategorie'] ?? null) ? $data['kategorie'] : []) as $label) {
             if (is_string($label) && $label !== '') {
                 $categories[$label] = true;
@@ -98,7 +107,8 @@ final class WebhookPayload
             'status'       => self::ASSESSED,
             'kwalifikacja' => $qualification,
             'kategorie'    => array_keys($categories),
-            'ocenzurowany' => $qualification === 'ocenzurowane' && is_string($masked) ? $masked : null,
+            'ocenzurowany' => $qualification === 'ocenzurowane' && is_string($masked)
+                && strpos($masked, self::MASK) !== false ? $masked : null,
             'wsparcie'     => ($data['wsparcie'] ?? null) === true,
             'wersja'       => is_string($version) && preg_match(self::VERSION, $version) ? $version : null,
             'dane_osobowe' => self::personalData($data['dane_osobowe'] ?? null),
@@ -119,8 +129,9 @@ final class WebhookPayload
         if ($section === null) {
             return [];
         }
-        $kind = is_array($section) ? ($section['rodzaj'] ?? null) : null;
-        $reaction = is_array($section) ? ($section['reakcja'] ?? null) : null;
+        $fields = $section instanceof \stdClass ? get_object_vars($section) : [];
+        $kind = $fields['rodzaj'] ?? null;
+        $reaction = $fields['reakcja'] ?? null;
         return [
             'rodzaj'  => is_string($kind) && $kind !== '' ? $kind : null,
             'reakcja' => in_array($reaction, self::PERSONAL_DATA_REACTIONS, true) ? $reaction : self::UNASSESSED,

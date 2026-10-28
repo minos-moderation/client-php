@@ -109,8 +109,31 @@ final class WebhookPayloadTest extends TestCase
     public function testTheMaskedTextIsReadOnlyWithOcenzurowane(): void
     {
         $read = WebhookPayload::parse(
-            '{"id":"k","status":"ocenione","kwalifikacja":"zablokowane","kategorie":[],"ocenzurowany":"x"}');
+            '{"id":"k","status":"ocenione","kwalifikacja":"zablokowane","kategorie":[],"ocenzurowany":"x █"}');
         self::assertNull($read['ocenzurowany']);
+    }
+
+    /**
+     * The contract sends `ocenzurowany` only when a fragment was masked. On the vector's own
+     * body, a masked text that is empty, masks nothing or is no text at all reads as absent,
+     * so the plugin holds the comment instead of publishing it; the vector's mask is kept.
+     */
+    public function testAMaskedTextThatMasksNothingReadsAsAbsent(): void
+    {
+        $body = self::vectorBody();
+        $mask = '"ocenzurowany":"no to jest ███████ pomysł"';
+        self::assertStringContainsString($mask, $body, 'the vector must carry its mask');
+        self::assertSame('no to jest ███████ pomysł', WebhookPayload::parse($body)['ocenzurowany']);
+
+        foreach (['""', '"no to jest głupi pomysł"', '"no to jest ####### pomysł"', '"▇▇▇"', 'null', '7',
+            '["███"]', '{"a":"███"}'] as $replacement) {
+            $read = WebhookPayload::parse(str_replace($mask, '"ocenzurowany":' . $replacement, $body));
+            self::assertSame('ocenzurowane', $read['kwalifikacja'], $replacement);
+            self::assertNull($read['ocenzurowany'], $replacement);
+        }
+        // One masked character is a mask; the length is the plugin's own check.
+        $partial = WebhookPayload::parse(str_replace($mask, '"ocenzurowany":"no to jest █ pomysł"', $body));
+        self::assertSame('no to jest █ pomysł', $partial['ocenzurowany']);
     }
 
     public function testAnUnknownCategoryIsKeptAndRepeatsAreNot(): void
@@ -118,6 +141,23 @@ final class WebhookPayloadTest extends TestCase
         $read = WebhookPayload::parse('{"id":"k","status":"ocenione","kwalifikacja":"zablokowane",'
             . '"kategorie":["grozba","nowa_kategoria","grozba",7,""]}');
         self::assertSame(['grozba', 'nowa_kategoria'], $read['kategorie']);
+    }
+
+    /**
+     * `kategorie` is a JSON list. An object, even one keyed like a list, names no category;
+     * the verdict itself stays.
+     */
+    public function testCategoriesAreReadOnlyFromAJsonList(): void
+    {
+        $body = self::vectorBody();
+        $list = '"kategorie":["wulgaryzmy"]';
+        self::assertStringContainsString($list, $body, 'the vector must carry its categories');
+        foreach (['{"0":"wulgaryzmy"}', '{"a":"grozba"}', '"wulgaryzmy"', 'null', 'true'] as $replacement) {
+            $read = WebhookPayload::parse(str_replace($list, '"kategorie":' . $replacement, $body));
+            self::assertSame([], $read['kategorie'], $replacement);
+            self::assertSame('ocenzurowane', $read['kwalifikacja'], $replacement);
+        }
+        self::assertSame([], WebhookPayload::parse(str_replace($list . ',', '', $body))['kategorie'], 'missing');
     }
 
     public function testWsparcieIsTrueOnlyWhenTrue(): void
@@ -140,7 +180,7 @@ final class WebhookPayloadTest extends TestCase
 
     public function testABodyWithoutAUsableIdIsNotAPayload(): void
     {
-        foreach (['', 'nie json', '[]', '"k"', '{"status":"ocenione"}', '{"id":""}',
+        foreach (['', 'nie json', '[]', '"k"', '[{"id":"k-1"}]', '{"status":"ocenione"}', '{"id":""}',
             '{"id":"k 1"}', "{\"id\":\"k-1\\n\"}", '{"id":' . json_encode(str_repeat('a', 65)) . '}'] as $body) {
             self::assertNull(WebhookPayload::parse($body), $body);
         }

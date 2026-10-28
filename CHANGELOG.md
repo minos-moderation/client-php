@@ -38,6 +38,10 @@ it, and what the library reads of the new verdict. Tagged after 0.1.0; a plugin 
   `nieocenione`, and a kind it does not know is kept. The lists are the new constants
   `WebhookPayload::PERSONAL_DATA_KINDS` and `PERSONAL_DATA_REACTIONS`. A plugin that reads
   the other keys is unaffected.
+- `WebhookPayload::parse` fails closed on two more shapes the contract never sends: an
+  `ocenzurowany` that is empty or masks nothing (no `█`) reads as absent, so the plugin
+  holds the comment instead of publishing it, and `kategorie` is read only from a JSON
+  list (an object names no category). An unknown category label is still kept.
 
 ### The mock gateway
 
