@@ -57,7 +57,8 @@ rule is stated, and the [index](#index) names them all.
   image carries one. A text the plugin failed to extract is not an empty text: the failure
   mode applies, and nothing (not even the title alone) is sent in its place. A topic's title
   alone is not a text to assess: a first post whose body has no visible text goes to the
-  failure mode and nothing is sent.
+  failure mode and nothing is sent. Punctuation the reader sees is text: a post of only a
+  line such as `|---|` outside a table, or an emoticon such as `:)`, is assessed and sent.
 - **F8** A plugin that is switched on but cannot submit (no key or secret, an unusable
   gateway address) applies the failure mode to every new post and says why on every admin
   page; a fresh install starts switched off.
@@ -73,11 +74,13 @@ rule is stated, and the [index](#index) names them all.
   word they belong to, because the reader can see them. Text the reader never sees is never
   added: not the content of an HTML comment, not an attribute the platform's sanitiser
   removes, not a link's `href` (a link is counted in `meta.links` and its domain listed in
-  `meta.link_domains`, S2). A quote can never bypass moderation.
+  `meta.link_domains`, S2), not an image's address: a labelled link is sent as its label
+  alone (`[url=X]Y[/url]` gives `Y`, never `Y (X)`). A quote can never bypass moderation.
 - **S2** `meta.link_domains` (at most 10 registrable domains), `meta.links` and
   `meta.author_first_post` are sent; never an e-mail, IP address, user id or login. The only
   names that leave the forum are those an author typed into the post (quote attributions),
-  because the engine assesses them as text.
+  because the engine assesses them as text. An image's address (`[img]`, `<img src>`) is not
+  a link: it is neither counted in `meta.links` nor listed in `meta.link_domains`.
 - **S3** The id is `<platform>:<post id>`. An edit of a post that is still waiting, or that
   a time-out left unassessed, is reassessed as `<platform>:<post id>.<n>`; a verdict for an
   older revision is acknowledged (200) and not applied.
@@ -184,11 +187,11 @@ rule is stated, and the [index](#index) names them all.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | 2026-10-28 |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | 2026-10-28 |
 | `F6` | a failing row never stops a loop | 2026-09-30 |
-| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | 2026-10-28, extended 2026-10-28 |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees, and visible punctuation, are text | 2026-10-28, extended 2026-10-28 and 2026-11-05 |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | 2026-10-28 |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | 2026-10-28 |
-| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | 2026-09-30, extended 2026-10-28 |
-| `S2` | links, domains, first post; never account data | 2026-09-30 |
+| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden (an `href`, an image's address) is added | 2026-09-30, extended 2026-10-28 and 2026-11-05 |
+| `S2` | links, domains, first post; never account data; an image's address is not a link | 2026-09-30, extended 2026-11-05 |
 | `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | 2026-09-30 |
 | `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | 2026-09-30 |
 | `S4b` | the note about a cut post | 2026-09-30 |
