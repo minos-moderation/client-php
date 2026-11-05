@@ -10,7 +10,7 @@ This file is their one public source, and it ships with every tag of this client
 follows the version its pin carries. A plugin does not copy the rules. Its `CLAUDE.md`
 points here (D1), and its `docs/development.md` maps every identifier below to the file and
 the test that implement it, or to an exemption (`odstępstwo: …`) with the issue that closes
-it.
+it, or that accepted it (D1).
 
 ## A change to one rule is a decision for every plugin
 
@@ -90,7 +90,10 @@ rule is stated, and the [index](#index) names them all.
   a link: it is neither counted in `meta.links` nor listed in `meta.link_domains`.
 - **S3** The id is `<platform>:<post id>`. An edit of a post that is still waiting, or that
   a time-out left unassessed, is reassessed as `<platform>:<post id>.<n>`; a verdict for an
-  older revision is acknowledged (200) and not applied.
+  older revision is acknowledged (200) and not applied. *Accepted exemption: in Discourse a
+  new post waits in the review queue, where only staff can edit it; such an edit is not
+  reassessed, its verdict is not applied (the post was edited since) and a moderator
+  decides.*
 - A post longer than 3000 characters is assessed on its first 3000 characters, and its
   publish decision is treated as `nieocenione` (**S4a**): fail-closed holds it with the note
   "wpis dłuższy niż 3000 znaków — oceniono początek", fail-open publishes it (marked)
@@ -171,7 +174,10 @@ rule is stated, and the [index](#index) names them all.
   `CLAUDE.md` says in one line that they are in `docs/plugin-behaviour.md` of
   `minos-moderation/client-php` and that a change to one of them is a decision for every
   plugin, not for that one; its `docs/development.md` maps every identifier to the file
-  and the test that implement it, or to `odstępstwo: …` with the issue that closes it.
+  and the test that implement it, or to `odstępstwo: …` with the issue that closes it. An
+  exemption the owner accepted is `odstępstwo: …` with the issue that accepted it, and is
+  named under its rule here. An optional rule a plugin does not implement (F5d) is not an
+  exemption and needs no issue: its cell says `nie wdrożono, reguła opcjonalna`.
 - **D2** Shared compliance scenarios live in this repository, under `scenarios/` (never
   `vectors/`, which are the gateway's, byte for byte): JSON files with an entry, the
   gateway's answers, the events and the expected state, in abstract terms (held,
@@ -200,7 +206,7 @@ rule is stated, and the [index](#index) names them all.
 | `F10` | the receiver answers `2xx` only for a stored verdict; a platform page in its place must be a non-`2xx` | 2026-11-05 |
 | `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden (an `href`, an image's address) is added | 2026-09-30, extended 2026-10-28 and 2026-11-05 |
 | `S2` | links, domains, first post; never account data; an image's address is not a link | 2026-09-30, extended 2026-11-05 |
-| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | 2026-09-30 |
+| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored; Discourse's accepted exemption | 2026-09-30, extended 2026-11-05 |
 | `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | 2026-09-30 |
 | `S4b` | the note about a cut post | 2026-09-30 |
 | `S4c` | `ocenzurowane` on a cut post is never applied automatically | 2026-09-30 |
@@ -220,5 +226,5 @@ rule is stated, and the [index](#index) names them all.
 | `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal; a mask is still published | 2026-10-28, extended 2026-11-05 |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | 2026-10-28, extended 2026-10-28 |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30, reworded 2026-10-28 |
-| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | 2026-09-30, reworded 2026-10-28 |
+| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it; an accepted exemption, an optional rule not implemented | 2026-09-30, reworded 2026-10-28, extended 2026-11-05 |
 | `D2` | shared compliance scenarios in `scenarios/` | 2026-10-28 |
