@@ -3,6 +3,13 @@
 What changes in `minos-moderation/client-php`, release by release. The version policy is at
 the end of this file.
 
+## Unreleased
+
+- docs: `docs/plugin-behaviour.md` clarifies A7 (the signal also after a person's
+  decision; a mask is still published), F7, S1 and S2 (punctuation is text; an image's
+  address is not a link), S3 and D1 (accepted exemptions; an optional rule not
+  implemented), and adds F10 (the receiver answers `2xx` only for a stored verdict).
+
 ## 0.2.0
 
 The contract's copy brought up to the gateway's documentation of 2026-10-28, the mock with
