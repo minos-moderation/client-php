@@ -101,6 +101,14 @@ workflows and `shellcheck` on the shell scripts; its actions are pinned to commi
 `tests/Repo/Php74SyntaxTest.php` reads every PHP file for the PHP 8 syntax a 7.4 host
 cannot run, so a file no test loads is checked too.
 
+A pull request that changes a path on the risk list (everything but this README and
+`docs/` other than the contract and `docs/plugin-behaviour.md`:
+`.github/review-trail/exempt-paths.txt`) is red in the `Review trail` job until its
+description, or a comment by a member, carries `Review: <agent> @ <head SHA> — AKCEPTACJA`
+for its current head (the full SHA or its first twelve characters or more). The job runs on
+`pull_request_target`, so its workflow, check and list are the base branch's and a pull
+request cannot loosen what judges it; it is a trace of the review, not a proof.
+
 ## The mock gateway
 
 The real batch route has been open in production since 2026-10-25 and the synchronous one
