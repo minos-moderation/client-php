@@ -64,6 +64,13 @@ rule is stated, and the [index](#index) names them all.
   page; a fresh install starts switched off.
 - **F9** Switching a plugin on again re-sends what was waiting when it was switched off,
   with a fresh time-out.
+- **F10** The receiver answers `2xx` only once the verdict is stored (applied, or recorded
+  for the work that applies it), or once it knows there is nothing to store (a repeated
+  delivery, an older revision's verdict, S3): the gateway counts any `2xx` as delivered and
+  keeps no verdict. A page the platform serves in place of the plugin's answer (a
+  maintenance mode, a closed forum, a read-only mode, a load limit) is a lost verdict unless
+  it is a non-`2xx`, which the gateway retries: either the receiver runs in that state, or
+  the platform's answer there is a non-`2xx`.
 
 ## What is sent
 
@@ -190,6 +197,7 @@ rule is stated, and the [index](#index) names them all.
 | `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees, and visible punctuation, are text | 2026-10-28, extended 2026-10-28 and 2026-11-05 |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | 2026-10-28 |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | 2026-10-28 |
+| `F10` | the receiver answers `2xx` only for a stored verdict; a platform page in its place must be a non-`2xx` | 2026-11-05 |
 | `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden (an `href`, an image's address) is added | 2026-09-30, extended 2026-10-28 and 2026-11-05 |
 | `S2` | links, domains, first post; never account data; an image's address is not a link | 2026-09-30, extended 2026-11-05 |
 | `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | 2026-09-30 |

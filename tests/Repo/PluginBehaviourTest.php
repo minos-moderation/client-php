@@ -16,7 +16,7 @@ final class PluginBehaviourTest extends TestCase
 {
     /** Every identifier the file has carried; a new rule is added here, none is removed. */
     private const IDENTIFIERS = [
-        'F1', 'F2', 'F3', 'F4', 'F5a', 'F5b', 'F5c', 'F5d', 'F6', 'F7', 'F8', 'F9',
+        'F1', 'F2', 'F3', 'F4', 'F5a', 'F5b', 'F5c', 'F5d', 'F6', 'F7', 'F8', 'F9', 'F10',
         'S1', 'S2', 'S3', 'S4a', 'S4b', 'S4c', 'S5', 'S6', 'S7',
         'A1', 'A2a', 'A2b', 'A2c', 'A2d', 'A2e', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8',
         'P1',
