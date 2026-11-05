@@ -4,7 +4,7 @@ Every Minos forum plugin (WordPress, phpBB, MyBB, Discourse, and any that follow
 posts to the gateway and applies the verdicts it delivers. These are the rules they all
 follow, beyond the [contract](contract.md) itself. The security reviews of the WordPress,
 MyBB, phpBB and Discourse plugins settled them on 2026-09-30, and the owner's decisions of
-2026-10-28 extended them.
+2026-10-28 and 2026-11-01 extended them.
 
 This file is their one public source, and it ships with every tag of this client: a plugin
 follows the version its pin carries. A plugin does not copy the rules. Its `CLAUDE.md`
@@ -111,7 +111,8 @@ rule is stated, and the [index](#index) names them all.
   stored text (**A2b**); the result of the update is checked and the stored text re-read
   before publishing (**A2c**). Otherwise the post is held with a note for the moderator and
   the masked text is shown in the moderation panel (**A2d**); the original is never
-  published in place of a failed mask (**A2e**).
+  published in place of a failed mask (**A2e**). A post with `wsparcie` that is already
+  published is not held for a failed mask: it stays as it is (A7).
 - **A3** The plugin's own fail-open publications are marked. A late verdict is applied to a
   marked post (back to the queue, masked, removed or confirmed) unless a moderator acted on
   it or it was edited since: a moderator's decision stays final.
@@ -125,9 +126,19 @@ rule is stated, and the [index](#index) names them all.
   unless a moderator acted on it or it was edited since; it is applied as if it had come in
   time.
 - **A7** `wsparcie` gives the forum's moderators an active signal in their own queue,
-  whatever the verdict. A post with `wsparcie` is never deleted, rejected or hidden
-  automatically: it stays held, or stays published, until a person decides. A plugin never
-  messages its author about it.
+  whatever the verdict. Active means that a moderator sees it in the platform's moderation
+  queue or list of posts without opening the post (a report, a flag, a marked row); an
+  e-mail may come with it and is not required. A post with `wsparcie` is never deleted,
+  rejected or hidden automatically: it stays held, or stays published, until a person
+  decides. A plugin never messages its author about it. The signal comes even when a person
+  decided first: a late verdict with `wsparcie` on a post a moderator approved or edited, or
+  on an older revision of a post edited since (S3, A3, A6), raises it with a note that it
+  came after that decision, and leaves the post visible or held as the person left it,
+  because a person's decision is about the post's visibility, not about the signal. With
+  `ocenzurowane`, the masked text is published as A2 says: "never hidden" does not cover the
+  mask. When the mask cannot be applied (A2a–A2c), a published post stays published with
+  its original text, since it must not be hidden, and a held post stays held with the masked
+  text shown to the moderator (A2d); the signal says that the mask was not applied.
 - **A8** A plugin keeps the original of a post it stored and the verdicts it received for
   30 days, then deletes them: the same period in every plugin, so a forum's privacy notice
   can name it. The 30 days cover the data the plugin stores itself (the original, the
@@ -195,7 +206,7 @@ rule is stated, and the [index](#index) names them all.
 | `A4` | notifications once, sent by the plugin where approval sends none | 2026-09-30, reworded 2026-10-28 |
 | `A5` | a hold is the platform's own state | 2026-09-30 |
 | `A6` | a late verdict also applies to a post the failure mode held | 2026-10-28 |
-| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | 2026-10-28 |
+| `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal; a mask is still published | 2026-10-28, extended 2026-11-05 |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | 2026-10-28, extended 2026-10-28 |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30, reworded 2026-10-28 |
 | `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | 2026-09-30, reworded 2026-10-28 |
