@@ -33,7 +33,7 @@ final class ClaudeRulesTest extends TestCase
     private const WRITING_TOOLS = ['Edit', 'Write', 'NotebookEdit'];
 
     /** What a Sonnet agent that edits files must name in its risk list, and never allow. */
-    private const SONNET_RISK_MARKERS = ['src/', 'docs/contract.md', 'docs/plugin-behaviour.md', 'vectors/',
+    public const SONNET_RISK_MARKERS = ['src/', 'docs/contract.md', 'docs/plugin-behaviour.md', 'vectors/',
         'mock-gateway/', '.github/', '.claude/', 'CLAUDE.md', 'composer.json', 'phpunit.xml.dist'];
 
     private const MODELS = ['opus', 'sonnet', 'haiku', 'fable'];
