@@ -3,12 +3,42 @@
 What changes in `minos-moderation/client-php`, release by release. The version policy is at
 the end of this file.
 
-## Unreleased
+## 0.2.1
 
-- docs: `docs/plugin-behaviour.md` clarifies A7 (the signal also after a person's
-  decision; a mask is still published), F7, S1 and S2 (punctuation is text; an image's
-  address is not a link), S3 and D1 (accepted exemptions; an optional rule not
-  implemented), and adds F10 (the receiver answers `2xx` only for a stored verdict).
+The shared plugin rules after the plugins' series of 2026-11-05, so that the rules the
+plugins' compliance tables cite ship with a tag (D1: a plugin follows the version its pin
+carries). Documentation only: `src/`, the contract's copy, `vectors/` and the mock gateway
+are those of 0.2.0, so a plugin on `^0.2` takes it with a lock update and nothing else. It
+is a patch under the version policy: no public method changes, the contract's copy is
+unchanged, and the one new rule narrows what a receiver may answer (it refuses more, never
+less).
+
+### The package
+
+- `docs/plugin-behaviour.md` adds **F10**: the receiver answers `2xx` only once the verdict
+  is stored (applied, or recorded for the work that applies it) or once it knows there is
+  nothing to store (a repeated delivery, an older revision's verdict); a page the platform
+  serves in place of the plugin's answer (a maintenance mode, a closed forum, a read-only
+  mode, a load limit) must be a non-`2xx`, which the gateway retries.
+- The same file, as worded on 2026-11-05: A7 (the signal is active, that is seen in the
+  moderation queue or list without opening the post, and comes also after a person's
+  decision, which it leaves standing; with `ocenzurowane` the mask is still published, and
+  a mask that cannot be applied leaves a published post published), A2e (a published post
+  with `wsparcie` is not held for a failed mask), F7 (punctuation the reader sees is text),
+  S1 and S2 (a labelled link is sent as its label alone; an image's address is not a link,
+  neither counted in `meta.links` nor listed in `meta.link_domains`), S3 (Discourse's
+  accepted exemption for an edit in the review queue) and D1 (an exemption the owner
+  accepted names the issue that accepted it; an optional rule not implemented is no
+  exemption). The rules' table dates each change.
+
+### Outside the package
+
+- CI: the `Review trail` job (`.github/workflows/review-trail.yml`, its check and exempt
+  list in `.github/review-trail/`) is red for a pull request that changes a path on the
+  risk list until it carries `Review: <agent> @ <head SHA> — AKCEPTACJA` for its head; the
+  README says which paths need none. A session hook refuses staging the whole work tree
+  (`git add -A`, `git add -u` without a path, `git commit -a`). Neither reaches the release
+  archive, which leaves out `.github/`, `.claude/` and `tests/`.
 
 ## 0.2.0
 
