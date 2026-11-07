@@ -64,7 +64,9 @@ final class ReviewTrailTest extends TestCase
 
     /**
      * Every path a risk marker of the rules test names needs a review, and what the Sonnet
-     * agent may change needs none: the exempt list and the agents' risk list are one list.
+     * agent may change needs none: the exempt list and the agents' risk list are one list,
+     * narrowed by README.md, whose Versioning section is policy every plugin depends on
+     * (the owner's decision C19).
      */
     public function testTheRiskMarkersNeedAReviewAndTheSonnetScopeDoesNot(): void
     {
@@ -78,6 +80,7 @@ final class ReviewTrailTest extends TestCase
         $paths[] = 'tests/Repo/ClaudeRulesTest.php';
         $paths[] = 'CHANGELOG.md';
         $paths[] = 'docs/CLAUDE.md';
+        $paths[] = 'README.md';
         // The fixtures: the receiver the end-to-end test delivers to, and the agents the rules
         // test must reject; neither is exempt.
         $paths[] = 'tests/Mock/fixtures/receiver.php';
@@ -86,7 +89,7 @@ final class ReviewTrailTest extends TestCase
             [$status, $out] = $this->check([$path], [], null);
             self::assertSame(1, $status, "{$path} must need a review: {$out}");
         }
-        foreach (['README.md', 'docs/receiving-in-a-plugin.md'] as $path) {
+        foreach (['docs/receiving-in-a-plugin.md', 'docs/x.md'] as $path) {
             [$status, $out] = $this->check([$path], [], null);
             self::assertSame(0, $status, "{$path} is the Sonnet agent's: {$out}");
             self::assertStringContainsString('No changed path is on the risk list', $out);
