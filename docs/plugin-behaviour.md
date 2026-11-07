@@ -4,13 +4,13 @@ Every Minos forum plugin (WordPress, phpBB, MyBB, Discourse, and any that follow
 posts to the gateway and applies the verdicts it delivers. These are the rules they all
 follow, beyond the [contract](contract.md) itself. The security reviews of the WordPress,
 MyBB, phpBB and Discourse plugins settled them on 2026-09-30, and the owner's decisions of
-2026-10-28 extended them.
+2026-10-28 and 2026-11-01 extended them.
 
 This file is their one public source, and it ships with every tag of this client: a plugin
 follows the version its pin carries. A plugin does not copy the rules. Its `CLAUDE.md`
 points here (D1), and its `docs/development.md` maps every identifier below to the file and
 the test that implement it, or to an exemption (`odstępstwo: …`) with the issue that closes
-it.
+it, or that accepted it (D1).
 
 ## A change to one rule is a decision for every plugin
 
@@ -57,12 +57,20 @@ rule is stated, and the [index](#index) names them all.
   image carries one. A text the plugin failed to extract is not an empty text: the failure
   mode applies, and nothing (not even the title alone) is sent in its place. A topic's title
   alone is not a text to assess: a first post whose body has no visible text goes to the
-  failure mode and nothing is sent.
+  failure mode and nothing is sent. Punctuation the reader sees is text: a post of only a
+  line such as `|---|` outside a table, or an emoticon such as `:)`, is assessed and sent.
 - **F8** A plugin that is switched on but cannot submit (no key or secret, an unusable
   gateway address) applies the failure mode to every new post and says why on every admin
   page; a fresh install starts switched off.
 - **F9** Switching a plugin on again re-sends what was waiting when it was switched off,
   with a fresh time-out.
+- **F10** The receiver answers `2xx` only once the verdict is stored (applied, or recorded
+  for the work that applies it), or once it knows there is nothing to store (a repeated
+  delivery, an older revision's verdict, S3): the gateway counts any `2xx` as delivered and
+  keeps no verdict. A page the platform serves in place of the plugin's answer (a
+  maintenance mode, a closed forum, a read-only mode, a load limit) is a lost verdict unless
+  it is a non-`2xx`, which the gateway retries: either the receiver runs in that state, or
+  the platform's answer there is a non-`2xx`.
 
 ## What is sent
 
@@ -73,14 +81,19 @@ rule is stated, and the [index](#index) names them all.
   word they belong to, because the reader can see them. Text the reader never sees is never
   added: not the content of an HTML comment, not an attribute the platform's sanitiser
   removes, not a link's `href` (a link is counted in `meta.links` and its domain listed in
-  `meta.link_domains`, S2). A quote can never bypass moderation.
+  `meta.link_domains`, S2), not an image's address: a labelled link is sent as its label
+  alone (`[url=X]Y[/url]` gives `Y`, never `Y (X)`). A quote can never bypass moderation.
 - **S2** `meta.link_domains` (at most 10 registrable domains), `meta.links` and
   `meta.author_first_post` are sent; never an e-mail, IP address, user id or login. The only
   names that leave the forum are those an author typed into the post (quote attributions),
-  because the engine assesses them as text.
+  because the engine assesses them as text. An image's address (`[img]`, `<img src>`) is not
+  a link: it is neither counted in `meta.links` nor listed in `meta.link_domains`.
 - **S3** The id is `<platform>:<post id>`. An edit of a post that is still waiting, or that
   a time-out left unassessed, is reassessed as `<platform>:<post id>.<n>`; a verdict for an
-  older revision is acknowledged (200) and not applied.
+  older revision is acknowledged (200) and not applied. *Accepted exemption: in Discourse a
+  new post waits in the review queue, where only staff can edit it; such an edit is not
+  reassessed, its verdict is not applied (the post was edited since) and a moderator
+  decides.*
 - A post longer than 3000 characters is assessed on its first 3000 characters, and its
   publish decision is treated as `nieocenione` (**S4a**): fail-closed holds it with the note
   "wpis dłuższy niż 3000 znaków — oceniono początek", fail-open publishes it (marked)
@@ -111,7 +124,8 @@ rule is stated, and the [index](#index) names them all.
   stored text (**A2b**); the result of the update is checked and the stored text re-read
   before publishing (**A2c**). Otherwise the post is held with a note for the moderator and
   the masked text is shown in the moderation panel (**A2d**); the original is never
-  published in place of a failed mask (**A2e**).
+  published in place of a failed mask (**A2e**). A post with `wsparcie` that is already
+  published is not held for a failed mask: it stays as it is (A7).
 - **A3** The plugin's own fail-open publications are marked. A late verdict is applied to a
   marked post (back to the queue, masked, removed or confirmed) unless a moderator acted on
   it or it was edited since: a moderator's decision stays final.
@@ -125,9 +139,19 @@ rule is stated, and the [index](#index) names them all.
   unless a moderator acted on it or it was edited since; it is applied as if it had come in
   time.
 - **A7** `wsparcie` gives the forum's moderators an active signal in their own queue,
-  whatever the verdict. A post with `wsparcie` is never deleted, rejected or hidden
-  automatically: it stays held, or stays published, until a person decides. A plugin never
-  messages its author about it.
+  whatever the verdict. Active means that a moderator sees it in the platform's moderation
+  queue or list of posts without opening the post (a report, a flag, a marked row); an
+  e-mail may come with it and is not required. A post with `wsparcie` is never deleted,
+  rejected or hidden automatically: it stays held, or stays published, until a person
+  decides. A plugin never messages its author about it. The signal comes even when a person
+  decided first: a late verdict with `wsparcie` on a post a moderator approved or edited, or
+  on an older revision of a post edited since (S3, A3, A6), raises it with a note that it
+  came after that decision, and leaves the post visible or held as the person left it,
+  because a person's decision is about the post's visibility, not about the signal. With
+  `ocenzurowane`, the masked text is published as A2 says: "never hidden" does not cover the
+  mask. When the mask cannot be applied (A2a–A2c), a published post stays published with
+  its original text, since it must not be hidden, and a held post stays held with the masked
+  text shown to the moderator (A2d); the signal says that the mask was not applied.
 - **A8** A plugin keeps the original of a post it stored and the verdicts it received for
   30 days, then deletes them: the same period in every plugin, so a forum's privacy notice
   can name it. The 30 days cover the data the plugin stores itself (the original, the
@@ -150,7 +174,10 @@ rule is stated, and the [index](#index) names them all.
   `CLAUDE.md` says in one line that they are in `docs/plugin-behaviour.md` of
   `minos-moderation/client-php` and that a change to one of them is a decision for every
   plugin, not for that one; its `docs/development.md` maps every identifier to the file
-  and the test that implement it, or to `odstępstwo: …` with the issue that closes it.
+  and the test that implement it, or to `odstępstwo: …` with the issue that closes it. An
+  exemption the owner accepted is `odstępstwo: …` with the issue that accepted it, and is
+  named under its rule here. An optional rule a plugin does not implement (F5d) is not an
+  exemption and needs no issue: its cell says `nie wdrożono, reguła opcjonalna`.
 - **D2** Shared compliance scenarios live in this repository, under `scenarios/` (never
   `vectors/`, which are the gateway's, byte for byte): JSON files with an entry, the
   gateway's answers, the events and the expected state, in abstract terms (held,
@@ -173,12 +200,13 @@ rule is stated, and the [index](#index) names them all.
 | `F5c` | a `ponow_za_s` past the time-out: the failure mode at once | 2026-10-28 |
 | `F5d` | optional: re-send what fail-open published unassessed once the limit renews | 2026-10-28 |
 | `F6` | a failing row never stops a loop | 2026-09-30 |
-| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees is text | 2026-10-28, extended 2026-10-28 |
+| `F7` | no text to assess (a title alone, only an image, a video, an attachment or a link without a label, an image's `alt` notwithstanding), or a failed extraction: the failure mode; a bare URL the reader sees, and visible punctuation, are text | 2026-10-28, extended 2026-10-28 and 2026-11-05 |
 | `F8` | switched on without a usable configuration: the failure mode; a fresh install is off | 2026-10-28 |
 | `F9` | switched on again: what waited is re-sent with a fresh time-out | 2026-10-28 |
-| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden is added | 2026-09-30, extended 2026-10-28 |
-| `S2` | links, domains, first post; never account data | 2026-09-30 |
-| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored | 2026-09-30 |
+| `F10` | the receiver answers `2xx` only for a stored verdict; a platform page in its place must be a non-`2xx` | 2026-11-05 |
+| `S1` | `tekst` is what the reader sees, `title`/`alt` included; nothing hidden (an `href`, an image's address) is added | 2026-09-30, extended 2026-10-28 and 2026-11-05 |
+| `S2` | links, domains, first post; never account data; an image's address is not a link | 2026-09-30, extended 2026-11-05 |
+| `S3` | an edit of a waiting post is `<id>.<n>`; an older revision's verdict is ignored; Discourse's accepted exemption | 2026-09-30, extended 2026-11-05 |
 | `S4a` | above 3000 characters: the beginning is assessed, the decision is `nieocenione` | 2026-09-30 |
 | `S4b` | the note about a cut post | 2026-09-30 |
 | `S4c` | `ocenzurowane` on a cut post is never applied automatically | 2026-09-30 |
@@ -195,8 +223,8 @@ rule is stated, and the [index](#index) names them all.
 | `A4` | notifications once, sent by the plugin where approval sends none | 2026-09-30, reworded 2026-10-28 |
 | `A5` | a hold is the platform's own state | 2026-09-30 |
 | `A6` | a late verdict also applies to a post the failure mode held | 2026-10-28 |
-| `A7` | `wsparcie` is an active signal for moderators, never an automatic removal | 2026-10-28 |
+| `A7` | `wsparcie` is an active signal for moderators, also after a person's decision, never an automatic removal; a mask is still published | 2026-10-28, extended 2026-11-05 |
 | `A8` | the plugin's own data (the original, the verdicts) is kept 30 days; the platform's records follow the forum's rules | 2026-10-28, extended 2026-10-28 |
 | `P1` | the archive carries no lock file, tests or mock, and pins the client | 2026-09-30, reworded 2026-10-28 |
-| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it | 2026-09-30, reworded 2026-10-28 |
+| `D1` | this file is the one source; `CLAUDE.md` points at it, `docs/development.md` maps it; an accepted exemption, an optional rule not implemented | 2026-09-30, reworded 2026-10-28, extended 2026-11-05 |
 | `D2` | shared compliance scenarios in `scenarios/` | 2026-10-28 |
